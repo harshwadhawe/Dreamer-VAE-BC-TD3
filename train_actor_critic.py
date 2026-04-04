@@ -10,7 +10,7 @@ from PIL import Image
 from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM
 
 # --- CONFIGURATION ---
-IMAGINATION_HORIZON = 15
+IMAGINATION_HORIZON = 20
 BATCH_SIZE = 128
 DREAM_EPOCHS = 1000
 GAMMA = 0.99

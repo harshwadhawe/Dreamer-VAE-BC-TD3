@@ -6,36 +6,38 @@ import csv
 import gymnasium as gym
 import gym_donkeycar
 
-from core import TUB_DIR, SIM_HOST, SIM_PORT, SIM_ENV
+from core import SIM_HOST, SIM_PORT
 
-def collect_data():
-    os.makedirs(TUB_DIR, exist_ok=True)
+def collect_transfer_data():
+    # NEW: Isolate the new domain data
+    tub_dir = "./tub_transfer" 
+    os.makedirs(tub_dir, exist_ok=True)
     
-    # --- UPGRADED: Rich Telemetry CSV ---
-    csv_file = open(os.path.join(TUB_DIR, "telemetry.csv"), mode='w', newline='')
+    csv_file = open(os.path.join(tub_dir, "telemetry.csv"), mode='w', newline='')
     csv_writer = csv.writer(csv_file)
     csv_writer.writerow(['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte'])
-
-    print("Connecting to Simulator...")
+    
+    print("Connecting to Warehouse Simulator...")
     conf = {
         "exe_path": "remote",
         "host": SIM_HOST,
         "port": SIM_PORT,
         "body_style": "donkey",
-        "body_rgb": (255, 0, 0),
-        "car_name": "Data_Collector",
+        "body_rgb": (0, 255, 0), # Let's make the car green for this one
+        "car_name": "Domain_Explorer",
         "font_size": 100
     }
-
-    env = gym.make(SIM_ENV, conf=conf)
+    
+    # NEW: Switch to the Warehouse environment
+    env = gym.make("donkey-generated-roads-v0", conf=conf)
     obs, info = env.reset()
     
     pygame.init()
     screen = pygame.display.set_mode((300, 200))
-    pygame.display.set_caption("Drive (Click Here First!)")
+    pygame.display.set_caption("Drive Warehouse")
     
     frame_count = 0
-    episode_id = 1 # NEW: Track continuous driving episodes
+    episode_id = 1
     running = True
     steering, throttle = 0.0, 0.0
     
@@ -61,28 +63,25 @@ def collect_data():
                 bgr_img = cv2.cvtColor(obs, cv2.COLOR_RGB2BGR)
                 cropped_img = bgr_img[:, 16:-16, :]
                 
-                # FIX: Timestamp prevents accidental data overwriting
                 timestamp = int(time.time() * 1000)
                 img_name = f"frame_{timestamp}.jpg"
-                cv2.imwrite(os.path.join(TUB_DIR, img_name), cropped_img)
+                cv2.imwrite(os.path.join(tub_dir, img_name), cropped_img)
                 
-                # NEW: Extract Physics from Unity
                 speed = info.get('speed', 0.0)
                 cte = info.get('cte', 0.0)
                 
-                # Save the rich data
                 csv_writer.writerow([img_name, steering, throttle, episode_id, reward, speed, cte])
                 csv_file.flush() 
 
                 frame_count += 1
                 if frame_count % 100 == 0:
-                    print(f"Saved {frame_count} images & telemetry...")
+                    print(f"Warehouse: Saved {frame_count} images...")
             
             if terminated or truncated:
-                print(f"Crash detected! Ending Episode {episode_id}...")
+                print(f"Crash! Ending Episode {episode_id}...")
                 env.reset()
                 steering, throttle = 0.0, 0.0
-                episode_id += 1 # NEW: Increment episode tracker on crash
+                episode_id += 1
                 
             time.sleep(0.05) 
             
@@ -90,7 +89,7 @@ def collect_data():
         csv_file.close()
         env.close()
         pygame.quit()
-        print(f"\nDone! Collected {frame_count} frames across {episode_id} episodes in '{TUB_DIR}'.")
+        print(f"\nDone! Collected {frame_count} frames in '{tub_dir}'.")
 
 if __name__ == "__main__":
-    collect_data()
+    collect_transfer_data()

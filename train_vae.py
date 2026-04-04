@@ -7,31 +7,19 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 import matplotlib.pyplot as plt
-from core import DeterministicEncoder # Reuse the same architecture for export compatibility
+
+from core import (
+    DeterministicEncoder, TUB_DIR, MODEL_DIR, device,
+    IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM
+)
+
 # --- CONFIGURATION ---
-TUB_DIR = './tub_sim' # Point this to your new Unity Simulator data!
-EPOCH_IMG_DIR = './models/vae/epoch_images_torch'
-MODEL_DIR = './models/vae'
-
-IMG_HEIGHT = 80
-IMG_WIDTH = 128
-CHANNELS = 3
-LATENT_DIM = 32
-
+EPOCH_IMG_DIR = os.path.join(MODEL_DIR, 'epoch_images_torch')
 BATCH_SIZE = 64
 EPOCHS = 50
 
 os.makedirs(EPOCH_IMG_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
-
-# Select Apple Silicon MPS if available, otherwise CPU/CUDA
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-    print("🚀 Apple M1/M2 GPU (MPS) detected and engaged!")
-elif torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
 
 # --- DATASET LOADER ---
 class DonkeyTubDataset(Dataset):
@@ -59,46 +47,37 @@ class DonkeyTubDataset(Dataset):
         # We crop the top 40px and take the center 128px for width
         _, h, w = img_tensor.shape
         start_x = (w - IMG_WIDTH) // 2
-        img_cropped = img_tensor[:, 40:40+IMG_HEIGHT, start_x:start_x+IMG_WIDTH]
+        img_cropped = img_tensor[:, IMG_CROP_TOP:IMG_CROP_TOP+IMG_HEIGHT, start_x:start_x+IMG_WIDTH]
         return img_cropped
 
-dataset = DonkeyTubDataset(TUB_DIR)
-dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
 # --- VAE ARCHITECTURE (Dreamer-Compatible) ---
 class VAE(nn.Module):
     def __init__(self):
         super(VAE, self).__init__()
-        
+        ch = ENCODER_CHANNELS  # [3, 32, 64, 128, 256]
+
         # ENCODER
-        # In: [3, 80, 128] -> Out: [256, 5, 8]
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1),  # -> [32, 40, 64]
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1), # -> [64, 20, 32]
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),# -> [128, 10, 16]
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),# -> [256, 5, 8]
-            nn.ReLU(),
-            nn.Flatten() # 256 * 5 * 8 = 10240
+            nn.Conv2d(ch[0], ch[1], kernel_size=3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(ch[1], ch[2], kernel_size=3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(ch[2], ch[3], kernel_size=3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(ch[3], ch[4], kernel_size=3, stride=2, padding=1), nn.ReLU(),
+            nn.Flatten()
         )
-        
-        self.fc_mu = nn.Linear(10240, LATENT_DIM)
-        self.fc_logvar = nn.Linear(10240, LATENT_DIM)
-        
+
+        self.fc_mu = nn.Linear(ENCODER_FLAT_DIM, LATENT_DIM)
+        self.fc_logvar = nn.Linear(ENCODER_FLAT_DIM, LATENT_DIM)
+
         # DECODER
-        self.fc_decode = nn.Linear(LATENT_DIM, 10240)
-        
+        self.fc_decode = nn.Linear(LATENT_DIM, ENCODER_FLAT_DIM)
+
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1), # -> [128, 10, 16]
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),  # -> [64, 20, 32]
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),   # -> [32, 40, 64]
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1, output_padding=1),    # -> [3, 80, 128]
-            nn.Sigmoid() # Bound outputs between 0 and 1
+            nn.ConvTranspose2d(ch[4], ch[3], kernel_size=3, stride=2, padding=1, output_padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(ch[3], ch[2], kernel_size=3, stride=2, padding=1, output_padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(ch[2], ch[1], kernel_size=3, stride=2, padding=1, output_padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(ch[1], ch[0], kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Sigmoid()
         )
 
     def encode(self, x):
@@ -112,7 +91,7 @@ class VAE(nn.Module):
 
     def decode(self, z):
         h = self.fc_decode(z)
-        h = h.view(-1, 256, 5, 8)
+        h = h.view(-1, ENCODER_CHANNELS[-1], IMG_HEIGHT // 16, IMG_WIDTH // 16)
         return self.decoder(h)
 
     def forward(self, x):
@@ -181,11 +160,20 @@ if __name__ == '__main__':
     # --- EXPORT ---
     print("Training Complete. Exporting Deterministic Encoder...")
 
-    export_model = DeterministicEncoder(model).to("cpu").eval()
+    # NEW: Save the full brain so we can visualize reconstructions later!
+    torch.save(model.state_dict(), os.path.join(MODEL_DIR, "full_vae.pth"))
+
+    export_model = DeterministicEncoder().to("cpu")
+    
+    # Surgically copy only the trained Encoder weights from the VAE
+    export_model.encoder.load_state_dict(model.encoder.state_dict())
+    export_model.fc_mu.load_state_dict(model.fc_mu.state_dict())
+    
+    export_model.eval()
 
     torch.save(export_model.state_dict(), os.path.join(MODEL_DIR, "vae_encoder.pth"))
 
-    dummy_input = torch.randn(1, 3, 80, 128)
+    dummy_input = torch.randn(1, ENCODER_CHANNELS[0], IMG_HEIGHT, IMG_WIDTH)
     onnx_path = os.path.join(MODEL_DIR, "vae_encoder.onnx")
     torch.onnx.export(
         export_model, 

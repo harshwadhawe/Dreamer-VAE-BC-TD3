@@ -1,5 +1,7 @@
 # Data
 tub_sim/
+tub_transfer/
+tub_merged/
 
 # Model weights
 models/
