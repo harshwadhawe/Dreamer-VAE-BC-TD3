@@ -42,7 +42,7 @@ if __name__ == '__main__':
     with open(os.path.join(TUB_DIR, "telemetry.csv"), 'r') as f:
         reader = csv.DictReader(f)
         for i, row in enumerate(reader):
-            if i >= 1500: break
+            # if i >= 1500: break
             img_path = os.path.join(TUB_DIR, row['frame'])
             if not os.path.exists(img_path): continue
 
@@ -89,7 +89,7 @@ if __name__ == '__main__':
             z_next, r_t, h_next = world_model.forward_step(z_t, a_t, h_t)
 
             v_next = critic(z_next)
-            steering_penalty = torch.pow(a_t[:, 0:1], 2) * 0.5
+            steering_penalty = torch.pow(a_t[:, 0:1], 2) 
             target_return = r_t + GAMMA * v_next - steering_penalty
             actor_loss += -target_return.mean()
 
