@@ -14,3 +14,4 @@ __pycache__/
 # IDE
 .vscode/
 .claude/
+CLAUDE.md

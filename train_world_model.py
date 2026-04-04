@@ -46,7 +46,7 @@ class DonkeyTrajectoryDataset(Dataset):
 
                 action = [steering, throttle]
                 # Extract the true Unity environmental reward from your new CSV column!
-                reward = float(row.get('reward', 0.0))
+                reward = throttle * 1.0 - abs(steering) * 0.1 # Simple reward: encourage forward throttle, penalize sharp steering
 
                 # --- THE TERMINAL PENALTY ---
                 # If the next row is a new episode (or we hit the end of the file), 
