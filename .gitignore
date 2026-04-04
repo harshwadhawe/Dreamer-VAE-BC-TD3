@@ -1,0 +1,16 @@
+# Data
+tub_sim/
+
+# Model weights
+models/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.claude/
