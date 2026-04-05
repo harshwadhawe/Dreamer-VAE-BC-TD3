@@ -13,6 +13,10 @@ from core import (
     IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM
 )
 
+# Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
+BETA_MAX = 0.5
+BETA_WARMUP_EPOCHS = 10
+
 # --- CONFIGURATION ---
 EPOCH_IMG_DIR = os.path.join(MODEL_DIR, 'epoch_images_torch')
 BATCH_SIZE = 64
@@ -57,7 +61,7 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
         ch = ENCODER_CHANNELS  # [3, 32, 64, 128, 256]
 
-        # ENCODER
+        # ENCODER — must match DeterministicEncoder in core.py
         self.encoder = nn.Sequential(
             nn.Conv2d(ch[0], ch[1], kernel_size=3, stride=2, padding=1), nn.ReLU(),
             nn.Conv2d(ch[1], ch[2], kernel_size=3, stride=2, padding=1), nn.ReLU(),
@@ -101,10 +105,9 @@ class VAE(nn.Module):
         return reconstruction, mu, logvar
 
 
-def vae_loss(recon_x, x, mu, logvar, beta=0.5):
+def vae_loss(recon_x, x, mu, logvar, beta):
     recon_loss = nn.functional.mse_loss(recon_x, x, reduction='sum')
     kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    # The Beta Multiplier prevents the KL term from erasing sharp shadows
     return recon_loss + (beta * kl_divergence)
 
 # --- MAIN EXECUTION BLOCK ---
@@ -122,21 +125,24 @@ if __name__ == '__main__':
 
     print("Starting PyTorch Training...")
     for epoch in range(EPOCHS):
+        # Beta warm-up: ramp from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
+        beta = min(BETA_MAX, BETA_MAX * epoch / max(BETA_WARMUP_EPOCHS, 1))
+
         model.train()
         train_loss = 0
         for batch_idx, data in enumerate(dataloader):
             data = data.to(device)
             optimizer.zero_grad()
-            
+
             recon_batch, mu, logvar = model(data)
-            loss = vae_loss(recon_batch, data, mu, logvar)
-            
+            loss = vae_loss(recon_batch, data, mu, logvar, beta)
+
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
-            
+
         avg_loss = train_loss / len(dataloader.dataset)
-        print(f"Epoch {epoch+1}/{EPOCHS} \t Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch+1}/{EPOCHS} \t Loss: {avg_loss:.4f} \t Beta: {beta:.3f}")
         
         # Save Epoch Image
         model.eval()

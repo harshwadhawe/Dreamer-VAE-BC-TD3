@@ -10,7 +10,7 @@ from PIL import Image
 from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM
 
 # --- CONFIGURATION ---
-IMAGINATION_HORIZON = 20
+IMAGINATION_HORIZON = 15
 BATCH_SIZE = 128
 DREAM_EPOCHS = 1000
 GAMMA = 0.99
@@ -22,10 +22,12 @@ if __name__ == '__main__':
     vae = DeterministicEncoder().to(device)
     vae.load_state_dict(torch.load(VAE_WEIGHTS, map_location=device))
     vae.eval()
+    vae.requires_grad_(False) # HARD FREEZE
 
     world_model = WorldModel().to(device)
     world_model.load_state_dict(torch.load(WORLD_MODEL_WEIGHTS, map_location=device))
     world_model.eval()
+    world_model.requires_grad_(False) # HARD FREEZE
 
     actor = Actor().to(device)
     critic = Critic().to(device)
@@ -36,38 +38,74 @@ if __name__ == '__main__':
     # --- EXTRACT REAL SEED STATES & ACTIONS (TD3+BC ANCHOR) ---
     print("Extracting REAL seed states from your driving data...")
     transform = transforms.Compose([transforms.ToTensor()])
+    
+    # 1. Group all rows by episode first
+    episodes_data = {}
+    with open(os.path.join(TUB_DIR, "telemetry.csv"), 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            img_path = os.path.join(TUB_DIR, row['frame'])
+            if not os.path.exists(img_path): continue
+            
+            ep_id = int(row.get('episode_id', 0))
+            if ep_id not in episodes_data:
+                episodes_data[ep_id] = []
+            episodes_data[ep_id].append(row)
+
     real_latents = []
     real_actions = []
 
-    with open(os.path.join(TUB_DIR, "telemetry.csv"), 'r') as f:
-        reader = csv.DictReader(f)
-        for i, row in enumerate(reader):
-            # if i >= 1500: break
-            img_path = os.path.join(TUB_DIR, row['frame'])
-            if not os.path.exists(img_path): continue
+    # 2. The Safety Margin
+    FRAMES_TO_DROP_AT_END = 30 
+    
+    # We want at least 10 usable "safe" frames from an episode to consider it valid
+    MIN_VALID_EP_LEN = FRAMES_TO_DROP_AT_END + 10 
 
+    skipped_micro_episodes = 0
+    valid_episodes = 0
+
+    for ep_id, rows in episodes_data.items():
+        # BUG FIX: Explicitly handle and track episodes that are too short
+        if len(rows) < MIN_VALID_EP_LEN:
+            skipped_micro_episodes += 1
+            continue 
+            
+        valid_episodes += 1
+        safe_rows = rows[:-FRAMES_TO_DROP_AT_END]
+        
+        for row in safe_rows:
             steering = float(row['steering'])
             throttle = float(row['throttle'])
             real_actions.append([steering, throttle])
 
+            img_path = os.path.join(TUB_DIR, row['frame'])
             img = Image.open(img_path).convert('RGB')
             img_tensor = transform(img).unsqueeze(0).to(device)
-            
-            # Using the unified cropper
             img_cropped = process_sim_image(img_tensor)
 
             with torch.no_grad():
-                latent = vae(img_cropped).squeeze(0)
+                latent = vae(img_cropped).squeeze(0).cpu() 
                 real_latents.append(latent)
 
-    real_latents = torch.stack(real_latents).to(device)
-    real_actions = torch.tensor(real_actions, dtype=torch.float32).to(device)
-    print(f"Loaded {len(real_latents)} real track positions. No more void dreaming.")
+    # 3. FATAL ERROR PREVENTION: Check if we actually have data left
+    if len(real_latents) == 0:
+        print("\n❌ FATAL ERROR: No valid frames survived the crash filter!")
+        print(f"Total episodes found: {len(episodes_data)}")
+        print(f"Micro-episodes discarded (< {MIN_VALID_EP_LEN} frames): {skipped_micro_episodes}")
+        print("You must record longer, safer driving sessions before training.")
+        exit(1)
+
+    real_latents = torch.stack(real_latents) 
+    real_actions = torch.tensor(real_actions, dtype=torch.float32)
+    
+    print(f"Discarded {skipped_micro_episodes} micro-episodes (too short).")
+    print(f"Purged {valid_episodes * FRAMES_TO_DROP_AT_END} crash frames from valid episodes.")
+    print(f"Loaded {len(real_latents)} purely safe track positions for the BC Anchor.")
 
     def get_seed_states(batch_size):
         idx = torch.randint(0, len(real_latents), (batch_size,))
-        return real_latents[idx], real_actions[idx]
-
+        return real_latents[idx].to(device), real_actions[idx].to(device)
+    
     # --- DREAMING LOOP ---
     print("\nInitiating Imagination Engine...")
 

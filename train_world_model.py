@@ -75,9 +75,6 @@ class DonkeyTrajectoryDataset(Dataset):
                 if i % 1000 == 0 and i > 0:
                     print(f"Processed {i} frames through the VAE...")
 
-                if i % 1000 == 0 and i > 0:
-                    print(f"Processed {i} frames through the VAE...")
-
         self.latents = torch.tensor(np.array(self.latents), dtype=torch.float32)
         self.actions = torch.tensor(np.array(self.actions), dtype=torch.float32)
         self.rewards = torch.tensor(np.array(self.rewards), dtype=torch.float32)

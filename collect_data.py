@@ -3,20 +3,49 @@ import time
 import cv2
 import pygame
 import csv
+import glob
 import gymnasium as gym
 import gym_donkeycar
 
 from core import TUB_DIR, SIM_HOST, SIM_PORT, SIM_ENV
 
+HEADER = ['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte']
+
 def collect_data():
     os.makedirs(TUB_DIR, exist_ok=True)
-    
-    # --- UPGRADED: Rich Telemetry CSV ---
-    csv_file = open(os.path.join(TUB_DIR, "telemetry.csv"), mode='w', newline='')
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte'])
 
-    print("Connecting to Simulator...")
+    telemetry_path = os.path.join(TUB_DIR, "telemetry.csv")
+
+    # --- Detect existing data ---
+    existing_frames = 0
+    last_episode_id = 0
+
+    if os.path.exists(telemetry_path):
+        with open(telemetry_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                existing_frames += 1
+                ep = int(row.get('episode_id', 0))
+                if ep > last_episode_id:
+                    last_episode_id = ep
+
+    existing_images = len(glob.glob(os.path.join(TUB_DIR, '*.jpg')))
+
+    if existing_frames > 0:
+        print(f"Found existing dataset: {existing_frames} rows in CSV, {existing_images} images on disk")
+        if existing_frames != existing_images:
+            print(f"  WARNING: CSV rows ({existing_frames}) != image count ({existing_images}) — possible data mismatch")
+        print(f"  Last episode ID: {last_episode_id}")
+        print(f"  Appending new data...")
+        csv_file = open(telemetry_path, mode='a', newline='')
+        csv_writer = csv.writer(csv_file)
+    else:
+        print(f"No existing data found in '{TUB_DIR}'. Starting fresh.")
+        csv_file = open(telemetry_path, mode='w', newline='')
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(HEADER)
+
+    print(f"Connecting to Simulator ({SIM_ENV} @ {SIM_HOST}:{SIM_PORT})...")
     conf = {
         "exe_path": "remote",
         "host": SIM_HOST,
@@ -29,16 +58,18 @@ def collect_data():
 
     env = gym.make(SIM_ENV, conf=conf)
     obs, info = env.reset()
-    
+
     pygame.init()
     screen = pygame.display.set_mode((300, 200))
     pygame.display.set_caption("Drive (Click Here First!)")
-    
+
     frame_count = 0
-    episode_id = 1 # NEW: Track continuous driving episodes
+    episode_id = last_episode_id + 1
     running = True
     steering, throttle = 0.0, 0.0
-    
+
+    print(f"Recording from Episode {episode_id}. Press ESC to stop.")
+
     try:
         while running:
             for event in pygame.event.get():
@@ -46,51 +77,49 @@ def collect_data():
                     running = False
 
             keys = pygame.key.get_pressed()
-            
-            if keys[pygame.K_UP]: throttle = min(throttle + 0.05, 0.3) 
+
+            if keys[pygame.K_UP]: throttle = min(throttle + 0.05, 0.3)
             elif keys[pygame.K_DOWN]: throttle = max(throttle - 0.1, -0.3)
-            else: throttle = throttle * 0.9 
-                
+            else: throttle = throttle * 0.9
+
             if keys[pygame.K_LEFT]: steering = max(steering - 0.1, -1.0)
             elif keys[pygame.K_RIGHT]: steering = min(steering + 0.1, 1.0)
-            else: steering = steering * 0.8 
-            
+            else: steering = steering * 0.8
+
             obs, reward, terminated, truncated, info = env.step([steering, throttle])
-            
+
             if throttle > 0.05:
                 bgr_img = cv2.cvtColor(obs, cv2.COLOR_RGB2BGR)
                 cropped_img = bgr_img[:, 16:-16, :]
-                
-                # FIX: Timestamp prevents accidental data overwriting
+
                 timestamp = int(time.time() * 1000)
                 img_name = f"frame_{timestamp}.jpg"
                 cv2.imwrite(os.path.join(TUB_DIR, img_name), cropped_img)
-                
-                # NEW: Extract Physics from Unity
+
                 speed = info.get('speed', 0.0)
                 cte = info.get('cte', 0.0)
-                
-                # Save the rich data
+
                 csv_writer.writerow([img_name, steering, throttle, episode_id, reward, speed, cte])
-                csv_file.flush() 
+                csv_file.flush()
 
                 frame_count += 1
                 if frame_count % 100 == 0:
-                    print(f"Saved {frame_count} images & telemetry...")
-            
+                    print(f"  +{frame_count} new frames (total: {existing_frames + frame_count}, episode {episode_id})")
+
             if terminated or truncated:
                 print(f"Crash detected! Ending Episode {episode_id}...")
                 env.reset()
                 steering, throttle = 0.0, 0.0
-                episode_id += 1 # NEW: Increment episode tracker on crash
-                
-            time.sleep(0.05) 
-            
+                episode_id += 1
+
+            time.sleep(0.05)
+
     finally:
         csv_file.close()
         env.close()
         pygame.quit()
-        print(f"\nDone! Collected {frame_count} frames across {episode_id} episodes in '{TUB_DIR}'.")
+        total = existing_frames + frame_count
+        print(f"\nDone! Added {frame_count} frames. Total dataset: {total} frames across episodes 1-{episode_id} in '{TUB_DIR}'.")
 
 if __name__ == "__main__":
     collect_data()
