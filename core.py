@@ -35,7 +35,7 @@ THROTTLE_CAP = 0.4
 # Simulator
 SIM_HOST = "127.0.0.1"
 SIM_PORT = 9091
-SIM_ENV = "donkey-minimonaco-track-v0"# "donkey-minimonaco-track-v0" # donkey-generated-roads-v0 donkey-generated-track-v0
+SIM_ENV = "donkey-generated-roads-v0"# "donkey-minimonaco-track-v0" # donkey-generated-roads-v0 donkey-generated-track-v0 donkey-warehouse-v0 donkey-circuit-launch-track-v0 donkey-warren-track-v0
 
 # Device
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")

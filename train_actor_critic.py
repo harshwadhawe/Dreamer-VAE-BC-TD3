@@ -127,7 +127,7 @@ if __name__ == '__main__':
             z_next, r_t, h_next = world_model.forward_step(z_t, a_t, h_t)
 
             v_next = critic(z_next)
-            steering_penalty = torch.pow(a_t[:, 0:1], 2) 
+            steering_penalty = torch.pow(a_t[:, 0:1], 2) * 0.1
             target_return = r_t + GAMMA * v_next - steering_penalty
             actor_loss += -target_return.mean()
 
