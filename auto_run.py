@@ -10,10 +10,10 @@ Halts the entire pipeline if any step fails. Models are saved to models/<tub_nam
 
 Usage:
     python auto_run.py                      # Default: tub_sim -> models/vae
-    python auto_run.py tub_physical_monaco  # Custom:  tub_physical_monaco -> models/tub_physical_monaco
+    python auto_run.py tub_1_26-04-01  # Custom:  tub_1_26-04-01 -> models/tub_1_26-04-01
 
 Drive with trained models:
-    MODEL_DIR=./models/tub_physical_monaco python drive_sim.py
+    MODEL_DIR=./models/tub_1_26-04-01 python drive_sim.py
 """
 
 import os
