@@ -10,11 +10,11 @@ import matplotlib.pyplot as plt
 
 from core import (
     DeterministicEncoder, TUB_DIR, MODEL_DIR, device,
-    IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM
+    IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM, DATASET_MULTIPLIER
 )
 
 # Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
-BETA_MAX = 0.5
+BETA_MAX = 0.1
 BETA_WARMUP_EPOCHS = 10
 
 # --- CONFIGURATION ---
@@ -25,30 +25,32 @@ EPOCHS = 50
 os.makedirs(EPOCH_IMG_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# --- DATASET LOADER ---
 class DonkeyTubDataset(Dataset):
     def __init__(self, tub_dir):
         self.img_paths = glob.glob(os.path.join(tub_dir, '**', '*.jpg'), recursive=True)
-        print(f"Found {len(self.img_paths)} images in {tub_dir}")
+        print(f"Found {len(self.img_paths)} golden images in {tub_dir}")
         if len(self.img_paths) == 0:
             raise ValueError("No images found! Check your TUB_DIR path.")
         
-        # PyTorch expects Channels-First (C, H, W)
         self.transform = transforms.Compose([
-            # Artificially shift lighting/shadows to force the network to learn track geometry
-            transforms.ColorJitter(brightness=0.2, contrast=0.2), 
-            transforms.ToTensor(), # Converts to [0.0, 1.0] and (C, H, W)
+            transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.2, hue=0.02),
+            transforms.RandomGrayscale(p=0.05), 
+            transforms.ToTensor(), 
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5)),
+            transforms.RandomErasing(p=0.2, scale=(0.02, 0.1), ratio=(0.3, 3.3), value=0)
         ])
 
-
     def __len__(self):
-        return len(self.img_paths)
+        # 2. Multiply the reported length
+        return len(self.img_paths) * DATASET_MULTIPLIER
 
     def __getitem__(self, idx):
-        img = Image.open(self.img_paths[idx]).convert('RGB')
+        # 3. The Modulus math: Wrap the index back to the real file limit
+        real_idx = idx % len(self.img_paths)
+        
+        img = Image.open(self.img_paths[real_idx]).convert('RGB')
         img_tensor = self.transform(img)
-        # Crop top 40 pixels: tensor shape is [3, 120, 160] (Sim default) or [3, 120, 128]
-        # We crop the top 40px and take the center 128px for width
+        
         _, h, w = img_tensor.shape
         start_x = (w - IMG_WIDTH) // 2
         img_cropped = img_tensor[:, IMG_CROP_TOP:IMG_CROP_TOP+IMG_HEIGHT, start_x:start_x+IMG_WIDTH]
@@ -105,10 +107,28 @@ class VAE(nn.Module):
         return reconstruction, mu, logvar
 
 
+# def vae_loss(recon_x, x, mu, logvar, beta):
+#     recon_loss = nn.functional.mse_loss(recon_x, x, reduction='sum')
+#     kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+#     return recon_loss + (beta * kl_divergence)
 def vae_loss(recon_x, x, mu, logvar, beta):
+    # 1. Reconstruction Loss (How well does it draw the track?)
     recon_loss = nn.functional.mse_loss(recon_x, x, reduction='sum')
-    kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return recon_loss + (beta * kl_divergence)
+    
+    # 2. Raw KL Divergence (Calculated per dimension, per item in batch)
+    # Shape: [Batch_Size, LATENT_DIM]
+    kl_div = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+    
+    # 3. FREE BITS: Allow 0.5 "Nats" of free information per dimension.
+    # If the KL penalty is below 0.5, we clamp it to 0.5. 
+    # This prevents the network from injecting pure static into unused dimensions.
+    free_nats = 0.5
+    kl_div_clamped = torch.clamp(kl_div, min=free_nats)
+    
+    # Sum the clamped KL loss
+    kl_loss = torch.sum(kl_div_clamped)
+    
+    return recon_loss + (beta * kl_loss)
 
 # --- MAIN EXECUTION BLOCK ---
 if __name__ == '__main__':
@@ -149,8 +169,8 @@ if __name__ == '__main__':
         with torch.no_grad():
             recon_imgs, _, _ = model(test_batch)
             
-            fig, axes = plt.subplots(2, 5, figsize=(15, 5))
-            for i in range(5):
+            fig, axes = plt.subplots(2, 12, figsize=(25, 5))
+            for i in range(12):
                 orig = test_batch[i].cpu().permute(1, 2, 0).numpy()
                 recon = recon_imgs[i].cpu().permute(1, 2, 0).numpy()
                 
@@ -186,7 +206,7 @@ if __name__ == '__main__':
         dummy_input, 
         onnx_path, 
         export_params=True, 
-        opset_version=11, 
+        opset_version=18,
         input_names=['input'], 
         output_names=['output']
     )

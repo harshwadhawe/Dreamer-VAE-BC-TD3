@@ -12,7 +12,7 @@ from core import process_sim_image, device
 
 # --- CONFIGURATION ---
 TUB_1 = "./tub_sim"       
-TUB_2 = "./tub_transfer"  
+TUB_2 = "./tub_sim"  
 FULL_VAE_WEIGHTS = "./models/transfer/full_vae.pth"
 NUM_IMAGES = 5
 LATENT_DIM = 128 # Must match your expanded brain!

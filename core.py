@@ -10,7 +10,8 @@ MODEL_DIR = os.getenv('MODEL_DIR', './models/vae')
 VAE_WEIGHTS = os.path.join(MODEL_DIR, 'vae_encoder.pth')
 WORLD_MODEL_WEIGHTS = os.path.join(MODEL_DIR, 'world_model.pth')
 ACTOR_WEIGHTS = os.path.join(MODEL_DIR, 'dreamer_actor.pth')
-
+# Dataset Scaling
+DATASET_MULTIPLIER = 10  # Artificially expand small datasets by this factor
 # Image preprocessing
 IMG_CROP_TOP = 40
 IMG_HEIGHT = 80
@@ -35,11 +36,30 @@ THROTTLE_CAP = 0.4
 # Simulator
 SIM_HOST = "127.0.0.1"
 SIM_PORT = 9091
-SIM_ENV = "donkey-minimonaco-track-v0"# "donkey-minimonaco-track-v0" # donkey-generated-roads-v0 donkey-generated-track-v0 donkey-warehouse-v0 donkey-circuit-launch-track-v0 donkey-warren-track-v0
+SIM_ENV = "donkey-circuit-launch-track-v0"  # Change this to your desired track/environment
 
-# Device
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+# donkey-minimonaco-track-v0
+# donkey-generated-roads-v0 
+# donkey-generated-track-v0 
+# donkey-warehouse-v0 
+# donkey-circuit-launch-track-v0 
+# donkey-warren-track-v0 
+# donkey-roboracingleague-track-v0
 
+# # Device
+# device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
+# --- UNIVERSAL HARDWARE SELECTOR ---
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    # FREE SPEED HACK: Optimizes Conv2D layers for your specific GPU architecture
+    torch.backends.cudnn.benchmark = True 
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
+print(f"Using device: {device}")
 # --- UNIFIED IMAGE PREPROCESSING ---
 def process_sim_image(img_tensor):
     """
