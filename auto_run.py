@@ -1,7 +1,12 @@
 """
-Automated Training Pipeline
-============================
-Runs the full VAE -> World Model -> Actor-Critic pipeline.
+Automated Training Pipeline - runs VAE -> World Model -> Actor-Critic sequentially.
+
+Requires: A tub directory with telemetry.csv and images (from collect_data.py or
+          add_telemetry_to_tub.py)
+Downstream: drive_sim.py or export_pth_to_tflite.py (uses trained models)
+
+Passes TUB_DIR and MODEL_DIR as environment variables to each training script.
+Halts the entire pipeline if any step fails. Models are saved to models/<tub_name>/.
 
 Usage:
     python auto_run.py                      # Default: tub_sim -> models/vae
@@ -12,8 +17,6 @@ Drive with trained models:
 """
 
 import os
-import shutil
-import csv
 import subprocess
 import sys
 
@@ -24,53 +27,6 @@ if len(sys.argv) > 1:
 else:
     TUB_DIR = "./tub_sim"
     MODEL_DIR = "./models/vae"
-
-# def bridge_data():
-#     print("========================================")
-#     print("🌉 STAGE 1: AUTOMATED DATA BRIDGING")
-#     print("========================================")
-#     os.makedirs(TUB_DIR, exist_ok=True)
-#     merged_csv_path = os.path.join(TUB_DIR, "telemetry.csv")
-
-#     current_episode_offset = 0
-#     total_frames = 0
-
-#     with open(merged_csv_path, 'w', newline='') as f_out:
-#         writer = csv.writer(f_out)
-#         writer.writerow(['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte'])
-
-#         for tub in SOURCE_TUBS:
-#             csv_path = os.path.join(tub, "telemetry.csv")
-#             if not os.path.exists(csv_path):
-#                 print(f"⚠️ Skipping {tub} (No telemetry.csv found)")
-#                 continue
-
-#             print(f"-> Stitching data from {tub}...")
-#             max_ep_in_tub = 0
-
-#             with open(csv_path, 'r') as f_in:
-#                 reader = csv.DictReader(f_in)
-#                 for row in reader:
-#                     # Safely copy image if it doesn't exist in the merged folder
-#                     src_img = os.path.join(tub, row['frame'])
-#                     dst_img = os.path.join(TUB_DIR, row['frame'])
-#                     if os.path.exists(src_img) and not os.path.exists(dst_img):
-#                         shutil.copy2(src_img, dst_img)
-
-#                     # Offset episode IDs to prevent physics teleportation glitches
-#                     original_ep_id = int(row.get('episode_id', 0))
-#                     new_ep_id = original_ep_id + current_episode_offset
-#                     max_ep_in_tub = max(max_ep_in_tub, original_ep_id)
-
-#                     writer.writerow([
-#                         row['frame'], row['steering'], row['throttle'], 
-#                         new_ep_id, row.get('reward', 0), row.get('speed', 0), row.get('cte', 0)
-#                     ])
-#                     total_frames += 1
-
-#             current_episode_offset += max_ep_in_tub
-            
-#     print(f"✅ Bridge Complete! {total_frames} total frames ready.\n")
 
 def run_script(script_name, env_vars):
     print("========================================")
@@ -107,6 +63,7 @@ if __name__ == '__main__':
     run_script("train_vae.py", os_env)
     run_script("train_world_model.py", os_env)
     run_script("train_actor_critic.py", os_env)
+    run_script("export_pth_to_tflite.py", os_env)
 
     print("========================================")
     print("PIPELINE COMPLETE!")

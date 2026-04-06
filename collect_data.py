@@ -1,3 +1,15 @@
+"""
+Manual driving data collection from the DonkeyCar simulator.
+
+Requires: Running simulator on SIM_HOST:SIM_PORT (configured in core.py)
+Downstream: train_vae.py -> train_world_model.py -> train_actor_critic.py
+
+Connects to the sim via gym-donkeycar, captures camera frames as JPGs and logs
+steering/throttle/episode_id to tub_sim/telemetry.csv using pygame keyboard input.
+Append-safe: detects existing data and continues episode numbering.
+Only saves frames when throttle > 0.05. Crops 16px from each side of raw sim images.
+"""
+
 import os
 import time
 import cv2

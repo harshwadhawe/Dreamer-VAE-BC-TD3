@@ -1,3 +1,15 @@
+"""
+Autonomous driving in the DonkeyCar simulator using trained Dreamer models.
+
+Requires: vae_encoder.pth + dreamer_actor.pth (from training pipeline),
+          running simulator on SIM_HOST:SIM_PORT
+Downstream: None (end of pipeline - inference/deployment)
+
+Loads frozen VAE encoder and trained Actor, connects to the simulator via gym-donkeycar,
+and runs a real-time autonomous driving loop. Camera image -> VAE latent -> Actor action
+-> steering/throttle. Resets on crash detection.
+"""
+
 import time
 import torch
 import gymnasium as gym

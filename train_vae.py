@@ -1,3 +1,16 @@
+"""
+Step 1: Train a Beta-VAE to compress camera images into a compact latent space.
+
+Requires: tub with .jpg images (from collect_data.py or add_telemetry_to_tub.py)
+Downstream: train_world_model.py (uses frozen vae_encoder.pth)
+
+Trains a convolutional VAE (80x128x3 -> 32-dim latent) with aggressive augmentation
+(ColorJitter, RandomGrayscale, GaussianBlur, RandomErasing) to force geometry-only
+features. Uses Free Bits KL (0.5 nats/dim) to prevent posterior collapse and beta
+warmup (0 -> 0.1 over 3 epochs). Exports DeterministicEncoder (mu-only, no sampling)
+as .pth, .onnx, and full VAE as full_vae.pth for reconstruction visualization.
+"""
+
 import os
 import glob
 import torch

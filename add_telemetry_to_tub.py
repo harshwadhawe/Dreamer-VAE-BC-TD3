@@ -1,22 +1,34 @@
+"""
+Converts physical DonkeyCar .catalog files to telemetry.csv for the Dreamer pipeline.
+
+Requires: A tub directory with .catalog files and images/ folder (from physical DonkeyCar)
+Downstream: auto_run.py (train_vae.py -> train_world_model.py -> train_actor_critic.py)
+
+Parses JSON-line .catalog files, extracts steering/throttle/timestamps, and auto-detects
+episode boundaries via >1s time gaps. Outputs a telemetry.csv compatible with the
+training pipeline. Speed/CTE/reward are zeroed (physical car has no sim metrics).
+
+Usage:
+    python add_telemetry_to_tub.py <tub_dir>
+    python add_telemetry_to_tub.py tub_1_26-04-01
+"""
+
 import os
+import sys
 import json
 import csv
 import glob
 
-# --- CONFIGURATION ---
-# Point this to your physical tub directory
-REAL_TUB_DIR = './tub_1_26-04-01' 
-
-def convert_donkey_catalog():
-    catalog_files = glob.glob(os.path.join(REAL_TUB_DIR, '*.catalog'))
+def convert_donkey_catalog(tub_dir):
+    catalog_files = glob.glob(os.path.join(tub_dir, '*.catalog'))
     if not catalog_files:
-        print(f"No .catalog files found in {REAL_TUB_DIR}!")
+        print(f"No .catalog files found in {tub_dir}!")
         return
 
     # Sort files to ensure chronological order (catalog_0.catalog, catalog_1.catalog, etc.)
     catalog_files.sort()
 
-    csv_path = os.path.join(REAL_TUB_DIR, 'telemetry.csv')
+    csv_path = os.path.join(tub_dir, 'telemetry.csv')
     
     # The header exactly as your train_world_model.py expects it
     header = ['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte']
@@ -76,4 +88,8 @@ def convert_donkey_catalog():
     print(f"Saved to: {csv_path}")
 
 if __name__ == '__main__':
-    convert_donkey_catalog()
+    if len(sys.argv) < 2:
+        print("Usage: python add_telemetry_to_tub.py <tub_dir>")
+        print("Example: python add_telemetry_to_tub.py tub_1_26-04-01")
+        sys.exit(1)
+    convert_donkey_catalog(sys.argv[1])

@@ -1,3 +1,20 @@
+"""
+Autonomous driving on a physical DonkeyCar using TFLite models.
+
+Requires: vae_encoder.tflite + dreamer_actor.tflite (from export_pth_to_tflite.py),
+          PCA9685 I2C PWM board, PiCamera
+Downstream: None (end of pipeline - physical deployment)
+
+Pure numpy preprocessing (no PyTorch dependency on Pi). Runs VAE encoder + Actor
+inference via tflite_runtime. Maps neural network outputs to PWM signals for
+steering servo and throttle ESC. Bulletproof shutdown: motors are killed on any
+exit (Ctrl+C, crash, or hardware failure) via finally block with None-checks.
+
+Usage:
+    python drive_physical_tflite.py <model_dir>
+    python drive_physical_tflite.py models/tub_1_26-04-01
+"""
+
 import sys
 import time
 import warnings
@@ -148,5 +165,9 @@ class PhysicalDreamerCar:
         print("="*50 + "\n")
 
 if __name__ == "__main__":
-    car = PhysicalDreamerCar(model_dir='./models')
+    if len(sys.argv) > 1:
+        model_dir = sys.argv[1]
+    else:
+        model_dir = './models/vae'
+    car = PhysicalDreamerCar(model_dir=model_dir)
     car.run()

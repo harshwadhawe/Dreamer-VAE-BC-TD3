@@ -1,3 +1,35 @@
+"""
+Centralized configuration and model architectures for the Dreamer pipeline.
+
+Requires: Nothing (this is the root dependency)
+Downstream: Every other script imports from here.
+
+Contains all shared constants (image dims, latent dim, batch sizes, device selection),
+unified image preprocessing (process_sim_image), and all neural network architectures
+(DeterministicEncoder, Actor, Critic, WorldModel). Hardware-aware config auto-selects
+batch sizes and workers for CUDA / MPS / CPU.
+
+Pipeline Dependency Graph:
+
+    core.py (root - no dependencies)
+      |
+      +-- collect_data.py --------------+
+      |
+      +-- add_telemetry_to_tub.py       |  (data sources)
+      |                                 |
+      +-- train_vae.py <----------------+
+      |     | vae_encoder.pth
+      +-- train_world_model.py
+      |     | world_model.pth
+      +-- train_actor_critic.py
+      |     | dreamer_actor.pth
+      |
+      +-- auto_run.py (orchestrates the 3 training steps)
+      |
+      +-- drive_sim.py (simulator inference)
+      +-- export_pth_to_tflite.py -> drive_physical_tflite.py (Pi deployment)
+"""
+
 import os
 import torch
 import torch.nn as nn

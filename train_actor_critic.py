@@ -1,3 +1,17 @@
+"""
+Step 3: Dreamer-style imagination training of Actor and Critic.
+
+Requires: vae_encoder.pth (from train_vae.py), world_model.pth (from train_world_model.py),
+          tub with telemetry.csv and images (for BC anchor seed states)
+Downstream: drive_sim.py or export_pth_to_tflite.py (uses dreamer_actor.pth)
+
+Freezes VAE + world model, then trains Actor and Critic entirely in imagination.
+Seeds dreams with real latent states from driving data (crash-frame purging: drops last
+30 frames per episode, skips episodes < 40 frames). TD3+BC behavioral cloning anchor
+(weight=10.0) on step 0. Rolls out imagined trajectories (horizon=20) with steering
+penalty and gradient clipping (max_norm=1.0). Exports dreamer_actor.pth.
+"""
+
 import os
 import csv
 import torch

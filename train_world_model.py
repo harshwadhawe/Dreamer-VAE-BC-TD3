@@ -1,3 +1,15 @@
+"""
+Step 2: Train a GRU-based world model (RSSM) to predict latent dynamics and rewards.
+
+Requires: vae_encoder.pth (from train_vae.py), tub with telemetry.csv and images
+Downstream: train_actor_critic.py (uses frozen world_model.pth)
+
+Freezes the VAE encoder and converts all images to latent vectors. Builds episode-aware
+sequences (SEQ_LEN=32, ~1.5s memory) that never cross episode boundaries. Trains a
+GRUCell(34->256) to predict next latent state and reward. Reward = throttle - |steering|*0.1
+with terminal penalty (-10) at crash frames. Exports world_model.pth.
+"""
+
 import os
 import csv
 import torch
