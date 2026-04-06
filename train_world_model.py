@@ -8,11 +8,11 @@ from torchvision import transforms
 from PIL import Image
 import numpy as np
 
-from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM
+from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD
 
 # --- CONFIGURATION ---
-SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum    
-BATCH_SIZE = 64
+SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
+BATCH_SIZE = BATCH_SIZE_WORLD
 EPOCHS = 100
 
 # --- TRAJECTORY DATASET ---

@@ -1,13 +1,29 @@
+"""
+Automated Training Pipeline
+============================
+Runs the full VAE -> World Model -> Actor-Critic pipeline.
+
+Usage:
+    python auto_run.py                      # Default: tub_sim -> models/vae
+    python auto_run.py tub_physical_monaco  # Custom:  tub_physical_monaco -> models/tub_physical_monaco
+
+Drive with trained models:
+    MODEL_DIR=./models/tub_physical_monaco python drive_sim.py
+"""
+
 import os
 import shutil
 import csv
 import subprocess
 import sys
 
-# --- CONFIGURATION ---
-# SOURCE_TUBS = ["./tub_sim", "./tub_transfer"]
-TUB_DIR = "./tub_sim"
-MODEL_DIR = "./models/vae"
+if len(sys.argv) > 1:
+    tub_name = sys.argv[1]
+    TUB_DIR = f"./{tub_name}"
+    MODEL_DIR = f"./models/{tub_name}"
+else:
+    TUB_DIR = "./tub_sim"
+    MODEL_DIR = "./models/vae"
 
 # def bridge_data():
 #     print("========================================")
@@ -73,23 +89,28 @@ def run_script(script_name, env_vars):
     print(f"✅ {script_name} completed successfully.\n")
 
 if __name__ == '__main__':
-    # 1. Execute the Data Bridge
-    # bridge_data()
+    # Validate tub exists
+    if not os.path.exists(os.path.join(TUB_DIR, "telemetry.csv")):
+        print(f"No telemetry.csv found in '{TUB_DIR}'")
+        print(f"Usage: python auto_run.py <tub_name>")
+        print(f"Example: python auto_run.py tub_physical_monaco")
+        sys.exit(1)
 
-    # 2. Define the Environment Variables for the Transfer Models
+    print(f"TUB_DIR:   {TUB_DIR}")
+    print(f"MODEL_DIR: {MODEL_DIR}")
+
     os_env = {
         "TUB_DIR": TUB_DIR,
         "MODEL_DIR": MODEL_DIR
     }
 
-    # 3. Execute the full Machine Learning Pipeline autonomously
     run_script("train_vae.py", os_env)
     run_script("train_world_model.py", os_env)
     run_script("train_actor_critic.py", os_env)
 
     print("========================================")
-    print("🎉 PIPELINE COMPLETE!")
-    print("Your multi-domain brain is fully trained.")
-    print(f"To test it in the Warehouse, run:")
-    print(f"MODEL_DIR={MODEL_DIR} python drive_sim.py")
+    print("PIPELINE COMPLETE!")
+    print(f"Models saved to: {MODEL_DIR}")
+    print(f"To drive, run:")
+    print(f"  MODEL_DIR={MODEL_DIR} python drive_sim.py")
     print("========================================")

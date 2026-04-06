@@ -10,8 +10,6 @@ MODEL_DIR = os.getenv('MODEL_DIR', './models/vae')
 VAE_WEIGHTS = os.path.join(MODEL_DIR, 'vae_encoder.pth')
 WORLD_MODEL_WEIGHTS = os.path.join(MODEL_DIR, 'world_model.pth')
 ACTOR_WEIGHTS = os.path.join(MODEL_DIR, 'dreamer_actor.pth')
-# Dataset Scaling
-DATASET_MULTIPLIER = 10  # Artificially expand small datasets by this factor
 # Image preprocessing
 IMG_CROP_TOP = 40
 IMG_HEIGHT = 80
@@ -46,18 +44,31 @@ SIM_ENV = "donkey-circuit-launch-track-v0"  # Change this to your desired track/
 # donkey-warren-track-v0 
 # donkey-roboracingleague-track-v0
 
-# # Device
-# device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
 # --- UNIVERSAL HARDWARE SELECTOR ---
 if torch.cuda.is_available():
     device = torch.device("cuda")
-    # FREE SPEED HACK: Optimizes Conv2D layers for your specific GPU architecture
-    torch.backends.cudnn.benchmark = True 
+    torch.backends.cudnn.benchmark = True
+    # CUDA config (RTX 4060 / 8GB+)
+    BATCH_SIZE_VAE = 256
+    BATCH_SIZE_WORLD = 256
+    BATCH_SIZE_ACTOR = 512
+    NUM_WORKERS = 4
+    DATASET_MULTIPLIER = 3
 elif torch.backends.mps.is_available():
     device = torch.device("mps")
+    # MPS config (Apple Silicon)
+    BATCH_SIZE_VAE = 64
+    BATCH_SIZE_WORLD = 64
+    BATCH_SIZE_ACTOR = 128
+    NUM_WORKERS = 2
+    DATASET_MULTIPLIER = 1
 else:
     device = torch.device("cpu")
+    BATCH_SIZE_VAE = 32
+    BATCH_SIZE_WORLD = 32
+    BATCH_SIZE_ACTOR = 64
+    NUM_WORKERS = 0
+    DATASET_MULTIPLIER = 1
 
 print(f"Using device: {device}")
 # --- UNIFIED IMAGE PREPROCESSING ---

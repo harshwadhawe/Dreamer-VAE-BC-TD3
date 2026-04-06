@@ -10,16 +10,17 @@ import matplotlib.pyplot as plt
 
 from core import (
     DeterministicEncoder, TUB_DIR, MODEL_DIR, device,
-    IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM, DATASET_MULTIPLIER
+    IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM,
+    DATASET_MULTIPLIER, BATCH_SIZE_VAE, NUM_WORKERS
 )
 
 # Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
 BETA_MAX = 0.1
-BETA_WARMUP_EPOCHS = 10
+BETA_WARMUP_EPOCHS = 3
 
 # --- CONFIGURATION ---
 EPOCH_IMG_DIR = os.path.join(MODEL_DIR, 'epoch_images_torch')
-BATCH_SIZE = 64
+BATCH_SIZE = BATCH_SIZE_VAE
 EPOCHS = 50
 
 os.makedirs(EPOCH_IMG_DIR, exist_ok=True)
@@ -135,7 +136,7 @@ if __name__ == '__main__':
     # Everything below here is protected from the multiprocessing workers
     
     dataset = DonkeyTubDataset(TUB_DIR)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
 
     model = VAE().to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -171,8 +172,8 @@ if __name__ == '__main__':
             
             fig, axes = plt.subplots(2, 12, figsize=(25, 5))
             for i in range(12):
-                orig = test_batch[i].cpu().permute(1, 2, 0).numpy()
-                recon = recon_imgs[i].cpu().permute(1, 2, 0).numpy()
+                orig = test_batch[i].cpu().permute(1, 2, 0).numpy().clip(0, 1)
+                recon = recon_imgs[i].cpu().permute(1, 2, 0).numpy().clip(0, 1)
                 
                 axes[0, i].imshow(orig)
                 axes[0, i].axis('off')

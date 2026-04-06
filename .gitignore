@@ -10,6 +10,9 @@ models/
 __pycache__/
 *.pyc
 
+# Archives
+#*.zip
+
 # macOS
 .DS_Store
 

@@ -7,11 +7,11 @@ from torchvision import transforms
 from PIL import Image
 
 # --- THE UNIFIED HUB ---
-from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM
+from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR
 
 # --- CONFIGURATION ---
 IMAGINATION_HORIZON = 20
-BATCH_SIZE = 128
+BATCH_SIZE = BATCH_SIZE_ACTOR
 DREAM_EPOCHS = 1000
 GAMMA = 0.99
 
