@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 from core import (
     DeterministicEncoder, TUB_DIR, MODEL_DIR, device,
     IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM,
-    DATASET_MULTIPLIER, BATCH_SIZE_VAE, NUM_WORKERS
+    DATASET_MULTIPLIER, BATCH_SIZE_VAE, NUM_WORKERS, PIN_MEMORY
 )
 
 # Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     # Everything below here is protected from the multiprocessing workers
     
     dataset = DonkeyTubDataset(TUB_DIR)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY)
 
     model = VAE().to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)

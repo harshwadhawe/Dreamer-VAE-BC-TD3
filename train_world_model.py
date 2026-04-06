@@ -20,7 +20,7 @@ from torchvision import transforms
 from PIL import Image
 import numpy as np
 
-from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD
+from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY
 
 # --- CONFIGURATION ---
 SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
@@ -123,7 +123,7 @@ if __name__ == '__main__':
 
     print("Building Sequential Dataset...")
     dataset = DonkeyTrajectoryDataset(TUB_DIR, SEQ_LEN, vae)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, pin_memory=PIN_MEMORY)
 
     # --- TRAINING LOOP ---
     world_model = WorldModel().to(device)

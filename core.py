@@ -85,7 +85,8 @@ if torch.cuda.is_available():
     BATCH_SIZE_WORLD = 256
     BATCH_SIZE_ACTOR = 512
     NUM_WORKERS = 4
-    DATASET_MULTIPLIER = 3
+    DATASET_MULTIPLIER = 5
+    PIN_MEMORY = True
 elif torch.backends.mps.is_available():
     device = torch.device("mps")
     # MPS config (Apple Silicon)
@@ -94,6 +95,7 @@ elif torch.backends.mps.is_available():
     BATCH_SIZE_ACTOR = 128
     NUM_WORKERS = 2
     DATASET_MULTIPLIER = 1
+    PIN_MEMORY = False
 else:
     device = torch.device("cpu")
     BATCH_SIZE_VAE = 32
@@ -101,6 +103,7 @@ else:
     BATCH_SIZE_ACTOR = 64
     NUM_WORKERS = 0
     DATASET_MULTIPLIER = 1
+    PIN_MEMORY = False
 
 print(f"Using device: {device}")
 # --- UNIFIED IMAGE PREPROCESSING ---
