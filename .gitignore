@@ -11,8 +11,8 @@ __pycache__/
 *.pyc
 
 # Archives
-#*.zip
-
+*.zip
+tub_1_26-04-01/
 # macOS
 .DS_Store
 
