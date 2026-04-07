@@ -37,7 +37,7 @@ import torch.nn as nn
 # --- UNIFIED CONFIGURATION ---
 
 # Paths
-TUB_DIR = os.getenv('TUB_DIR', './tub_sim')
+TUB_DIR = os.getenv('TUB_DIR', './tub_road')
 MODEL_DIR = os.getenv('MODEL_DIR', './models/vae')
 VAE_WEIGHTS = os.path.join(MODEL_DIR, 'vae_encoder.pth')
 WORLD_MODEL_WEIGHTS = os.path.join(MODEL_DIR, 'world_model.pth')
@@ -61,12 +61,12 @@ REWARD_HIDDEN = 64
 ENCODER_FLAT_DIM = ENCODER_CHANNELS[-1] * (IMG_HEIGHT // 16) * (IMG_WIDTH // 16)
 
 # Actor output scaling
-THROTTLE_CAP = 0.4
+THROTTLE_CAP = 0.2
 
 # Simulator
 SIM_HOST = "127.0.0.1"
 SIM_PORT = 9091
-SIM_ENV = "donkey-circuit-launch-track-v0"  # Change this to your desired track/environment
+SIM_ENV = "donkey-generated-roads-v0"  # Change this to your desired track/environment
 
 # donkey-minimonaco-track-v0
 # donkey-generated-roads-v0 

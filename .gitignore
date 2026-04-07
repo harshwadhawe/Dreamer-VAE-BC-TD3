@@ -1,8 +1,5 @@
 # Data
-tub_sim/
-tub_transfer/
-tub_merged/
-tub_1_26-04-01/
+tub*/
 
 # Model weights
 models/

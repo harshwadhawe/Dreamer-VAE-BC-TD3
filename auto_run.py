@@ -28,21 +28,26 @@ else:
     TUB_DIR = "./tub_sim"
     MODEL_DIR = "./models/vae"
 
-def run_script(script_name, env_vars):
+def run_script(script_name, env_vars, cli_args=None):
     print("========================================")
-    print(f"🚀 STAGE: Executing {script_name}")
+    print(f"STAGE: Executing {script_name}")
     print("========================================")
-    
+
     # Merge the current system environment variables with our custom ones
     custom_env = os.environ.copy()
     custom_env.update(env_vars)
-    
+
+    # Build command: python script_name [cli_args...]
+    cmd = [sys.executable, script_name]
+    if cli_args:
+        cmd.extend(cli_args)
+
     # Run the script and halt the entire pipeline if it crashes
-    result = subprocess.run([sys.executable, script_name], env=custom_env)
+    result = subprocess.run(cmd, env=custom_env)
     if result.returncode != 0:
-        print(f"\n❌ FATAL ERROR: {script_name} crashed. Pipeline halted.")
+        print(f"\nFATAL ERROR: {script_name} crashed. Pipeline halted.")
         sys.exit(1)
-    print(f"✅ {script_name} completed successfully.\n")
+    print(f"{script_name} completed successfully.\n")
 
 if __name__ == '__main__':
     # Validate tub exists
@@ -63,7 +68,7 @@ if __name__ == '__main__':
     run_script("train_vae.py", os_env)
     run_script("train_world_model.py", os_env)
     run_script("train_actor_critic.py", os_env)
-    run_script("export_pth_to_tflite.py", os_env)
+    run_script("export_pth_to_tflite.py", os_env, cli_args=[MODEL_DIR])
 
     print("========================================")
     print("PIPELINE COMPLETE!")
