@@ -16,12 +16,16 @@ import gymnasium as gym
 import gym_donkeycar
 
 from core import (
-    DeterministicEncoder, Actor, process_sim_image,
+    MODEL_DIR,DeterministicEncoder, Actor, process_sim_image,
     VAE_WEIGHTS, ACTOR_WEIGHTS, SIM_HOST, SIM_PORT, SIM_ENV, device
 )
 
 # --- INITIALIZATION ---
 print(f"Engaging Autopilot on: {device}")
+
+
+print(f"\n\nUsing model directory: {MODEL_DIR}\n\n")
+
 
 print("Loading VAE Brain...")
 vae = DeterministicEncoder().to(device)

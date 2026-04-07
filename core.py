@@ -61,7 +61,7 @@ REWARD_HIDDEN = 64
 ENCODER_FLAT_DIM = ENCODER_CHANNELS[-1] * (IMG_HEIGHT // 16) * (IMG_WIDTH // 16)
 
 # Actor output scaling
-THROTTLE_CAP = 0.2
+THROTTLE_CAP = 0.3
 
 # Simulator
 SIM_HOST = "127.0.0.1"

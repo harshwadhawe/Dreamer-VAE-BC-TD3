@@ -19,7 +19,7 @@ import glob
 import gymnasium as gym
 import gym_donkeycar
 
-from core import TUB_DIR, SIM_HOST, SIM_PORT, SIM_ENV
+from core import TUB_DIR, SIM_HOST, SIM_PORT, SIM_ENV, THROTTLE_CAP
 
 HEADER = ['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte']
 
@@ -90,8 +90,8 @@ def collect_data():
 
             keys = pygame.key.get_pressed()
 
-            if keys[pygame.K_UP]: throttle = min(throttle + 0.05, 0.3)
-            elif keys[pygame.K_DOWN]: throttle = max(throttle - 0.1, -0.3)
+            if keys[pygame.K_UP]: throttle = min(throttle + 0.05, THROTTLE_CAP)
+            elif keys[pygame.K_DOWN]: throttle = max(throttle - 0.1, -THROTTLE_CAP)
             else: throttle = throttle * 0.9
 
             if keys[pygame.K_LEFT]: steering = max(steering - 0.1, -1.0)
