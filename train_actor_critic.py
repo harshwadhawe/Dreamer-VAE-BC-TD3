@@ -24,10 +24,10 @@ from PIL import Image
 from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR
 
 # --- CONFIGURATION ---
-IMAGINATION_HORIZON = 20
-BATCH_SIZE = BATCH_SIZE_ACTOR
-DREAM_EPOCHS = 1000
-GAMMA = 0.99
+IMAGINATION_HORIZON = 15     # Slightly shorter horizon limits compounding physics errors
+BATCH_SIZE = BATCH_SIZE_ACTOR # 512 is great, drop to 256 if CUDA OOM occurs
+DREAM_EPOCHS = 150           # Prevents the Actor from exploiting World Model loopholes
+GAMMA = 0.95                 # Prioritizes immediate survival over long-term planning
 
 if __name__ == '__main__':
     print(f"Using device: {device}")

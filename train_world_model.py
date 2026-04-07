@@ -25,7 +25,7 @@ from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, V
 # --- CONFIGURATION ---
 SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
 BATCH_SIZE = BATCH_SIZE_WORLD
-EPOCHS = 100
+EPOCHS = 50
 
 # --- TRAJECTORY DATASET ---
 class DonkeyTrajectoryDataset(Dataset):

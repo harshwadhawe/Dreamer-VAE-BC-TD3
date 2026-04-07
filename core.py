@@ -83,7 +83,7 @@ if torch.cuda.is_available():
     # CUDA config (RTX 4060 / 8GB+)
     BATCH_SIZE_VAE = 256
     BATCH_SIZE_WORLD = 256
-    BATCH_SIZE_ACTOR = 512
+    BATCH_SIZE_ACTOR = 256
     NUM_WORKERS = 4
     DATASET_MULTIPLIER = 5
     PIN_MEMORY = True
