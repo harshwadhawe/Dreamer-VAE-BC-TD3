@@ -8,7 +8,7 @@ Trains a convolutional VAE (80x128x3 -> 32-dim latent) with aggressive augmentat
 (ColorJitter, RandomGrayscale, GaussianBlur, RandomErasing) to force geometry-only
 features. Uses Free Bits KL (0.5 nats/dim) to prevent posterior collapse and beta
 warmup (0 -> 0.1 over 3 epochs). Exports DeterministicEncoder (mu-only, no sampling)
-as .pth, .onnx, and full VAE as full_vae.pth for reconstruction visualization.
+as .pth and full VAE as full_vae.pth for reconstruction visualization.
 """
 
 import os
@@ -42,7 +42,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 class DonkeyTubDataset(Dataset):
     def __init__(self, tub_dir):
         self.img_paths = glob.glob(os.path.join(tub_dir, '**', '*.jpg'), recursive=True)
-        print(f"Found {len(self.img_paths)} golden images in {tub_dir}")
+        print(f"Found {len(self.img_paths)} images in {tub_dir}")
         if len(self.img_paths) == 0:
             raise ValueError("No images found! Check your TUB_DIR path.")
         
@@ -146,18 +146,27 @@ def vae_loss(recon_x, x, mu, logvar, beta):
 
 # --- MAIN EXECUTION BLOCK ---
 if __name__ == '__main__':
-    # Everything below here is protected from the multiprocessing workers
-    
+    print(f"Using device: {device}")
+    print(f"TUB_DIR: {TUB_DIR}")
+    print(f"MODEL_DIR: {MODEL_DIR}")
+    print(f"Config: batch_size={BATCH_SIZE}, workers={NUM_WORKERS}, multiplier={DATASET_MULTIPLIER}, pin_memory={PIN_MEMORY}")
+    print(f"VAE: latent_dim={LATENT_DIM}, beta_max={BETA_MAX}, beta_warmup={BETA_WARMUP_EPOCHS}")
+
     dataset = DonkeyTubDataset(TUB_DIR)
+    print(f"Effective dataset size: {len(dataset)} ({len(dataset)//DATASET_MULTIPLIER} images x {DATASET_MULTIPLIER} multiplier)")
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY)
+    print(f"Batches per epoch: {len(dataloader)}")
 
     model = VAE().to(device)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"VAE parameters: {total_params:,}")
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
     # Grab a fixed batch for visualizing progress
     test_batch = next(iter(dataloader)).to(device)
 
-    print("Starting PyTorch Training...")
+    print(f"\nStarting VAE Training ({EPOCHS} epochs)...")
+    print("-" * 60)
     for epoch in range(EPOCHS):
         # Beta warm-up: ramp from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
         beta = min(BETA_MAX, BETA_MAX * epoch / max(BETA_WARMUP_EPOCHS, 1))
@@ -177,52 +186,39 @@ if __name__ == '__main__':
 
         avg_loss = train_loss / len(dataloader.dataset)
         print(f"Epoch {epoch+1}/{EPOCHS} \t Loss: {avg_loss:.4f} \t Beta: {beta:.3f}")
-        
+
         # Save Epoch Image
         model.eval()
         with torch.no_grad():
             recon_imgs, _, _ = model(test_batch)
-            
+
             fig, axes = plt.subplots(2, 12, figsize=(25, 5))
             for i in range(12):
                 orig = test_batch[i].cpu().permute(1, 2, 0).numpy().clip(0, 1)
                 recon = recon_imgs[i].cpu().permute(1, 2, 0).numpy().clip(0, 1)
-                
+
                 axes[0, i].imshow(orig)
                 axes[0, i].axis('off')
                 axes[1, i].imshow(recon)
                 axes[1, i].axis('off')
-                
+
             plt.suptitle(f"Epoch {epoch + 1}")
             plt.savefig(os.path.join(EPOCH_IMG_DIR, f"epoch_{epoch + 1:03d}.png"))
             plt.close(fig)
 
     # --- EXPORT ---
-    print("Training Complete. Exporting Deterministic Encoder...")
+    print("-" * 60)
+    print("Training Complete. Exporting models...")
 
-    # NEW: Save the full brain so we can visualize reconstructions later!
     torch.save(model.state_dict(), os.path.join(MODEL_DIR, "full_vae.pth"))
+    print(f"  Saved full_vae.pth")
 
     export_model = DeterministicEncoder().to("cpu")
-    
-    # Surgically copy only the trained Encoder weights from the VAE
     export_model.encoder.load_state_dict(model.encoder.state_dict())
     export_model.fc_mu.load_state_dict(model.fc_mu.state_dict())
-    
     export_model.eval()
 
     torch.save(export_model.state_dict(), os.path.join(MODEL_DIR, "vae_encoder.pth"))
+    print(f"  Saved vae_encoder.pth")
 
-    dummy_input = torch.randn(1, ENCODER_CHANNELS[0], IMG_HEIGHT, IMG_WIDTH)
-    onnx_path = os.path.join(MODEL_DIR, "vae_encoder.onnx")
-    torch.onnx.export(
-        export_model, 
-        dummy_input, 
-        onnx_path, 
-        export_params=True, 
-        opset_version=18,
-        input_names=['input'], 
-        output_names=['output']
-    )
-
-    print(f"Success! Encoder saved as PyTorch (.pth) and ONNX (.onnx) in {MODEL_DIR}")
+    print(f"Done! Encoder exported to {MODEL_DIR}")

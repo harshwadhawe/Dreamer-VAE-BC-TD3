@@ -114,23 +114,31 @@ class DonkeyTrajectoryDataset(Dataset):
 
 
 if __name__ == '__main__':
-    print(f"Using Device: {device}")
+    print(f"Using device: {device}")
+    print(f"TUB_DIR: {TUB_DIR}")
+    print(f"MODEL_DIR: {MODEL_DIR}")
+    print(f"Config: batch_size={BATCH_SIZE}, seq_len={SEQ_LEN}, pin_memory={PIN_MEMORY}")
 
-    print("Loading Frozen VAE Encoder...")
+    print("\nLoading Frozen VAE Encoder...")
     vae = DeterministicEncoder().to(device)
     vae.load_state_dict(torch.load(VAE_WEIGHTS, map_location=device))
     vae.eval()
+    print(f"  Loaded {VAE_WEIGHTS}")
 
     print("Building Sequential Dataset...")
     dataset = DonkeyTrajectoryDataset(TUB_DIR, SEQ_LEN, vae)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True, pin_memory=PIN_MEMORY)
+    print(f"Batches per epoch: {len(dataloader)}")
 
     # --- TRAINING LOOP ---
     world_model = WorldModel().to(device)
+    total_params = sum(p.numel() for p in world_model.parameters())
+    print(f"World Model parameters: {total_params:,}")
     optimizer = optim.Adam(world_model.parameters(), lr=1e-3)
     criterion = nn.MSELoss()
 
-    print("\nStarting World Model Training...")
+    print(f"\nStarting World Model Training ({EPOCHS} epochs)...")
+    print("-" * 80)
     for epoch in range(EPOCHS):
         world_model.train()
         total_loss, dyn_loss_total, rew_loss_total = 0, 0, 0
@@ -157,6 +165,8 @@ if __name__ == '__main__':
 
         print(f"Epoch {epoch+1}/{EPOCHS} | Total Loss: {total_loss/len(dataloader):.4f} | Dyn Loss: {dyn_loss_total/len(dataloader):.4f} | Rew Loss: {rew_loss_total/len(dataloader):.4f}")
 
-    print("\nExporting the Imagination Engine (World Model)...")
+    print("-" * 80)
+    print("Training Complete. Exporting World Model...")
     torch.save(world_model.state_dict(), os.path.join(MODEL_DIR, "world_model.pth"))
-    print("Done! We are ready to let the Actor-Critic Dream.")
+    print(f"  Saved world_model.pth to {MODEL_DIR}")
+    print("Done! Ready for Actor-Critic dreaming.")

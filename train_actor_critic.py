@@ -30,21 +30,31 @@ DREAM_EPOCHS = 1000
 GAMMA = 0.99
 
 if __name__ == '__main__':
-    print(f"Using Device: {device}")
+    print(f"Using device: {device}")
+    print(f"TUB_DIR: {TUB_DIR}")
+    print(f"MODEL_DIR: {MODEL_DIR}")
+    print(f"Config: batch_size={BATCH_SIZE}, horizon={IMAGINATION_HORIZON}, dream_epochs={DREAM_EPOCHS}, gamma={GAMMA}")
 
-    print("Loading Models from core.py architecture...")
+    print("\nLoading Frozen VAE Encoder...")
     vae = DeterministicEncoder().to(device)
     vae.load_state_dict(torch.load(VAE_WEIGHTS, map_location=device))
     vae.eval()
-    vae.requires_grad_(False) # HARD FREEZE
+    vae.requires_grad_(False)
+    print(f"  Loaded {VAE_WEIGHTS}")
 
+    print("Loading Frozen World Model...")
     world_model = WorldModel().to(device)
     world_model.load_state_dict(torch.load(WORLD_MODEL_WEIGHTS, map_location=device))
     world_model.eval()
-    world_model.requires_grad_(False) # HARD FREEZE
+    world_model.requires_grad_(False)
+    print(f"  Loaded {WORLD_MODEL_WEIGHTS}")
 
     actor = Actor().to(device)
     critic = Critic().to(device)
+    actor_params = sum(p.numel() for p in actor.parameters())
+    critic_params = sum(p.numel() for p in critic.parameters())
+    print(f"Actor parameters: {actor_params:,}")
+    print(f"Critic parameters: {critic_params:,}")
 
     actor_opt = optim.Adam(actor.parameters(), lr=1e-4)
     critic_opt = optim.Adam(critic.parameters(), lr=1e-4)
@@ -121,7 +131,8 @@ if __name__ == '__main__':
         return real_latents[idx].to(device), real_actions[idx].to(device)
     
     # --- DREAMING LOOP ---
-    print("\nInitiating Imagination Engine...")
+    print(f"\nInitiating Imagination Engine ({DREAM_EPOCHS} dream epochs)...")
+    print("-" * 80)
 
     for epoch in range(DREAM_EPOCHS):
         z_t, true_a_t = get_seed_states(BATCH_SIZE)
@@ -173,6 +184,8 @@ if __name__ == '__main__':
             print(f"Dream Epoch {epoch:04d} | RL Loss: {actor_loss.item():.4f} | BC Anchor: {bc_loss.item():.4f}")
 
     # --- EXPORT ---
-    print("\nWaking up. Exporting the trained Actor...")
+    print("-" * 80)
+    print("Training Complete. Exporting Actor...")
     torch.save(actor.state_dict(), os.path.join(MODEL_DIR, "dreamer_actor.pth"))
+    print(f"  Saved dreamer_actor.pth to {MODEL_DIR}")
     print("Done! Autopilot updated.")
