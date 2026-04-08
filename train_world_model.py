@@ -148,15 +148,21 @@ if __name__ == '__main__':
 
             optimizer.zero_grad()
             z_pred, r_pred = world_model(z_seq, a_seq)
-
+            # z_target wants the NEXT state
             z_target = z_seq[:, 1:, :]
-            r_target = r_seq[:, 1:, :]
+            
+            # r_target wants the CURRENT reward associated with a_t
+            r_target = r_seq[:, :-1, :] 
 
             dynamics_loss = criterion(z_pred, z_target)
             reward_loss = criterion(r_pred, r_target)
             loss = dynamics_loss + (reward_loss * 5.0)
 
             loss.backward()
+            
+            # PROTECT THE OPTIMIZER FROM TERMINAL PENALTY SPIKES
+            torch.nn.utils.clip_grad_norm_(world_model.parameters(), max_norm=5.0)
+
             optimizer.step()
 
             total_loss += loss.item()

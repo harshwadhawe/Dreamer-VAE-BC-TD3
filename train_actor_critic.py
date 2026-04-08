@@ -155,12 +155,18 @@ if __name__ == '__main__':
             v_next = critic(z_next)
             steering_penalty = torch.pow(a_t[:, 0:1], 2) * STEERING_PENALTY
             target_return = r_t + GAMMA * v_next - steering_penalty
-            actor_loss += -target_return.mean()
+            
+            # APPLY THE DISCOUNT FACTOR
+            discount = GAMMA ** t
+            actor_loss += -discount * target_return.mean()
 
-            # CRITIC LOSS: Detached targets (fixes the retain_graph memory leak)
+            # CRITIC LOSS: Pure environment value (No steering penalty here)
             current_v = critic(z_t.detach())
             v_next_detached = critic(z_next.detach())
-            critic_target = r_t + GAMMA * v_next_detached - steering_penalty.detach()
+            
+            # Remove the `- steering_penalty.detach()` from this line
+            critic_target = r_t + GAMMA * v_next_detached 
+            
             critic_loss += nn.functional.mse_loss(current_v, critic_target.detach())
 
             z_t = z_next
