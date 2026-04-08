@@ -18,7 +18,7 @@ import sys
 import json
 import csv
 import glob
-
+from core import TUB_DIR, MODEL_DIR 
 def convert_donkey_catalog(tub_dir):
     catalog_files = glob.glob(os.path.join(tub_dir, '*.catalog'))
     if not catalog_files:
@@ -88,8 +88,8 @@ def convert_donkey_catalog(tub_dir):
     print(f"Saved to: {csv_path}")
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python add_telemetry_to_tub.py <tub_dir>")
-        print("Example: python add_telemetry_to_tub.py tub_1_26-04-01")
-        sys.exit(1)
-    convert_donkey_catalog(sys.argv[1])
+    # if len(sys.argv) < 2:
+    #     print("Usage: python add_telemetry_to_tub.py <tub_dir>")
+    #     print("Example: python add_telemetry_to_tub.py tub_1_26-04-01")
+    #     sys.exit(1)
+    convert_donkey_catalog(TUB_DIR)
