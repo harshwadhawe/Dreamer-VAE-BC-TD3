@@ -37,7 +37,10 @@ import torch.nn as nn
 # --- UNIFIED CONFIGURATION ---
 
 # Paths
-TUB_DIR = os.getenv('TUB_DIR', './tub_1_26-04-06')
+TUB_NAME = "tub_1_26-04-06"  # Default tub name (can be overridden by auto_run.py CLI arg)
+TUB_DIR = os.getenv('TUB_DIR', f'./data/{TUB_NAME}')
+MODEL_DIR = os.getenv('MODEL_DIR', f'./models/{TUB_NAME}')
+TUB_DIR = os.getenv('TUB_DIR', './data/tub_1_26-04-06')
 MODEL_DIR = os.getenv('MODEL_DIR', f'./models/{os.path.basename(TUB_DIR)}')
 VAE_WEIGHTS = os.path.join(MODEL_DIR, 'vae_encoder.pth')
 WORLD_MODEL_WEIGHTS = os.path.join(MODEL_DIR, 'world_model.pth')
