@@ -19,14 +19,12 @@ Drive with trained models:
 import os
 import subprocess
 import sys
+from core import TUB_DIR, MODEL_DIR
 
 if len(sys.argv) > 1:
     tub_name = sys.argv[1]
     TUB_DIR = f"./{tub_name}"
     MODEL_DIR = f"./models/{tub_name}"
-else:
-    TUB_DIR = "./tub_sim"
-    MODEL_DIR = "./models/vae"
 
 def run_script(script_name, env_vars, cli_args=None):
     print("========================================")
