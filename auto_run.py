@@ -23,7 +23,7 @@ from core import TUB_DIR, MODEL_DIR
 
 if len(sys.argv) > 1:
     tub_name = sys.argv[1]
-    TUB_DIR = f"./{tub_name}"
+    TUB_DIR = f"./data/{tub_name}"
     MODEL_DIR = f"./models/{tub_name}"
 
 def run_script(script_name, env_vars, cli_args=None):

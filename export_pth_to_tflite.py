@@ -20,15 +20,6 @@ import litert_torch
 from core import DeterministicEncoder, Actor, MODEL_DIR
 
 if __name__ == '__main__':
-    # Accept CLI arg or fall back to MODEL_DIR env var
-    # if len(sys.argv) > 1:
-    #     model_dir = sys.argv[1]
-    # elif os.getenv('MODEL_DIR'):
-    #     model_dir = os.getenv('MODEL_DIR')
-    # else:
-    #     print("Usage: python export_pth_to_tflite.py <model_dir>")
-    #     print("Example: python export_pth_to_tflite.py models/tub_1_26-04-01")
-    #     sys.exit(1)
 
     print(f"Loading PyTorch Brains from {MODEL_DIR}...")
     vae = DeterministicEncoder().eval()
