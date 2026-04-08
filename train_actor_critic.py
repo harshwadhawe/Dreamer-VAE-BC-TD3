@@ -26,8 +26,9 @@ from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_im
 # --- CONFIGURATION ---
 IMAGINATION_HORIZON = 15     # Slightly shorter horizon limits compounding physics errors
 BATCH_SIZE = BATCH_SIZE_ACTOR # 512 is great, drop to 256 if CUDA OOM occurs
-DREAM_EPOCHS = 150           # Prevents the Actor from exploiting World Model loopholes
-GAMMA = 0.95                 # Prioritizes immediate survival over long-term planning
+DREAM_EPOCHS = 1000           # Prevents the Actor from exploiting World Model loopholes
+GAMMA = 0.99                 # Prioritizes immediate survival over long-term planning
+STEERING_PENALTY = 0.1       # Discourages extreme steering in imagined trajectories   
 
 if __name__ == '__main__':
     print(f"Using device: {device}")
@@ -152,7 +153,7 @@ if __name__ == '__main__':
             z_next, r_t, h_next = world_model.forward_step(z_t, a_t, h_t)
 
             v_next = critic(z_next)
-            steering_penalty = torch.pow(a_t[:, 0:1], 2) * 0.1
+            steering_penalty = torch.pow(a_t[:, 0:1], 2) * STEERING_PENALTY
             target_return = r_t + GAMMA * v_next - steering_penalty
             actor_loss += -target_return.mean()
 

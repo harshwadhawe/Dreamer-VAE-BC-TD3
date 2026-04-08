@@ -29,7 +29,7 @@ from core import (
 
 # Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
 BETA_MAX = 0.1
-BETA_WARMUP_EPOCHS = 3
+BETA_WARMUP_EPOCHS = 5
 
 # --- CONFIGURATION ---
 EPOCH_IMG_DIR = os.path.join(MODEL_DIR, 'epoch_images_torch')
