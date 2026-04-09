@@ -13,8 +13,10 @@ as .pth and full VAE as full_vae.pth for reconstruction visualization.
 
 import os
 import glob
+import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -39,19 +41,49 @@ EPOCHS = 50
 os.makedirs(EPOCH_IMG_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+class RandomShadow:
+    """Overlays a vertical shadow band to simulate tree/building shadows on track."""
+    def __init__(self, p=0.3):
+        self.p = p
+    def __call__(self, img):
+        if random.random() > self.p:
+            return img
+        _, h, w = img.shape
+        x1 = random.randint(0, w // 2)
+        x2 = random.randint(w // 2, w)
+        shadow = torch.ones_like(img)
+        shadow[:, :, x1:x2] = random.uniform(0.4, 0.7)
+        return img * shadow
+
+class RandomMotionBlur:
+    """Applies horizontal motion blur to simulate speed-dependent visual effects."""
+    def __init__(self, kernel_size=5, p=0.3):
+        self.kernel_size = kernel_size
+        self.p = p
+    def __call__(self, img):
+        if random.random() > self.p:
+            return img
+        kernel = torch.zeros(self.kernel_size, self.kernel_size)
+        kernel[self.kernel_size // 2, :] = 1.0 / self.kernel_size
+        kernel = kernel.unsqueeze(0).unsqueeze(0).repeat(3, 1, 1, 1)
+        return F.conv2d(img.unsqueeze(0), kernel, groups=3, padding=self.kernel_size // 2).squeeze(0)
+
 class DonkeyTubDataset(Dataset):
     def __init__(self, tub_dir):
         self.img_paths = glob.glob(os.path.join(tub_dir, '**', '*.jpg'), recursive=True)
         print(f"Found {len(self.img_paths)} images in {tub_dir}")
         if len(self.img_paths) == 0:
             raise ValueError("No images found! Check your TUB_DIR path.")
-        
+
         self.transform = transforms.Compose([
             transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.2, hue=0.02),
-            transforms.RandomGrayscale(p=0.05), 
-            transforms.ToTensor(), 
+            transforms.RandomPerspective(distortion_scale=0.1, p=0.3),
+            transforms.RandomGrayscale(p=0.05),
+            transforms.ToTensor(),
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5)),
             transforms.RandomHorizontalFlip(p=0.5),
+            RandomShadow(p=0.3),
+            RandomMotionBlur(kernel_size=5, p=0.3),
             transforms.RandomErasing(p=0.2, scale=(0.02, 0.1), ratio=(0.3, 3.3), value=0)
         ])
 

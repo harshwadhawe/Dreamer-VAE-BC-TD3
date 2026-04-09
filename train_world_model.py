@@ -17,15 +17,19 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+import torchvision.transforms.functional as TF
 from PIL import Image
 import numpy as np
 
-from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY
+from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP
 
 # --- CONFIGURATION ---
 SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
 BATCH_SIZE = BATCH_SIZE_WORLD
 EPOCHS = 50
+FLIP_EPISODE_OFFSET = 100000  # Offset for flipped episode IDs to prevent cross-contamination
+LATENT_NOISE_STD = 0.02       # Gaussian noise injected into latents during training
+ACTION_NOISE_STD = 0.01       # Gaussian noise injected into actions during training
 
 # --- TRAJECTORY DATASET ---
 class DonkeyTrajectoryDataset(Dataset):
@@ -39,15 +43,14 @@ class DonkeyTrajectoryDataset(Dataset):
 
         print(f"Reading telemetry from {telemetry_path}...")
 
-        self.latents = []
-        self.actions = []
-        self.rewards = []
-        self.episodes = [] # NEW: Track episode segments
+        # Initialize separate lists for original and flipped data
+        orig_latents, orig_actions, orig_rewards, orig_episodes = [], [], [], []
+        flip_latents, flip_actions, flip_rewards, flip_episodes = [], [], [], []
 
         with open(telemetry_path, 'r') as f:
             reader = csv.DictReader(f)
-            rows = list(reader) # Load all rows so we can look ahead
-            
+            rows = list(reader)
+
             for i, row in enumerate(rows):
                 img_path = os.path.join(tub_dir, row['frame'])
                 if not os.path.exists(img_path): continue
@@ -56,21 +59,12 @@ class DonkeyTrajectoryDataset(Dataset):
                 throttle = float(row['throttle'])
                 ep_id = int(row.get('episode_id', 0))
 
-                action = [steering, throttle]
-                # Extract the true Unity environmental reward from your new CSV column!
-                reward = throttle * 1.0 - abs(steering) * 0.1 # Simple reward: encourage forward throttle, penalize sharp steering
+                reward = throttle * 1.0 - abs(steering) * 0.1
 
-                # --- THE TERMINAL PENALTY ---
-                # If the next row is a new episode (or we hit the end of the file), 
-                # this current frame is the CRASH. Penalize it heavily!
                 is_terminal = False
-                if i == len(rows) - 1:
+                if i == len(rows) - 1 or int(rows[i+1].get('episode_id', 0)) != ep_id:
                     is_terminal = True
-                elif int(rows[i+1].get('episode_id', 0)) != ep_id:
-                    is_terminal = True
-
-                if is_terminal:
-                    reward = -10.0 
+                    reward = -10.0
 
                 img = Image.open(img_path).convert('RGB')
                 img_tensor = self.transform(img).unsqueeze(0).to(device)
@@ -78,18 +72,29 @@ class DonkeyTrajectoryDataset(Dataset):
 
                 with torch.no_grad():
                     latent = vae_model(img_cropped).squeeze(0).cpu().numpy()
+                    img_flipped = TF.hflip(img_cropped)
+                    latent_flip = vae_model(img_flipped).squeeze(0).cpu().numpy()
 
-                self.latents.append(latent)
-                self.actions.append(action)
-                self.rewards.append([reward])
-                self.episodes.append(ep_id)
+                # Store Original
+                orig_latents.append(latent)
+                orig_actions.append([steering, throttle])
+                orig_rewards.append([reward])
+                orig_episodes.append(ep_id)
+
+                # Store Flipped
+                flip_latents.append(latent_flip)
+                flip_actions.append([-steering, throttle])
+                flip_rewards.append([reward])
+                flip_episodes.append(ep_id + FLIP_EPISODE_OFFSET)
 
                 if i % 1000 == 0 and i > 0:
                     print(f"Processed {i} frames through the VAE...")
 
-        self.latents = torch.tensor(np.array(self.latents), dtype=torch.float32)
-        self.actions = torch.tensor(np.array(self.actions), dtype=torch.float32)
-        self.rewards = torch.tensor(np.array(self.rewards), dtype=torch.float32)
+        # Concatenate them cleanly so sequences are continuous
+        self.latents = torch.tensor(np.array(orig_latents + flip_latents), dtype=torch.float32)
+        self.actions = torch.tensor(np.array(orig_actions + flip_actions), dtype=torch.float32)
+        self.rewards = torch.tensor(np.array(orig_rewards + flip_rewards), dtype=torch.float32)
+        self.episodes = orig_episodes + flip_episodes
 
         # --- THE TELEPORTATION FIX ---
         self.valid_indices = []
@@ -106,10 +111,19 @@ class DonkeyTrajectoryDataset(Dataset):
     def __getitem__(self, idx):
         # Map the random index to a safe, continuous sequence
         safe_idx = self.valid_indices[idx]
-        
-        z = self.latents[safe_idx : safe_idx + self.seq_len]
-        a = self.actions[safe_idx : safe_idx + self.seq_len]
+
+        z = self.latents[safe_idx : safe_idx + self.seq_len].clone()
+        a = self.actions[safe_idx : safe_idx + self.seq_len].clone()
         r = self.rewards[safe_idx : safe_idx + self.seq_len]
+
+        # Latent noise injection — regularization for small datasets
+        z = z + torch.randn_like(z) * LATENT_NOISE_STD
+
+        # Action jitter — smooths policy sensitivity to exact action values
+        a = a + torch.randn_like(a) * ACTION_NOISE_STD
+        a[:, 0].clamp_(-1.0, 1.0)    # keep steering valid
+        a[:, 1].clamp_(0.0, THROTTLE_CAP)  # keep throttle valid
+
         return z, a, r
 
 

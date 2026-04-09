@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms
+import torchvision.transforms.functional as TF
 from PIL import Image
 
 # --- THE UNIFIED HUB ---
@@ -101,7 +102,6 @@ if __name__ == '__main__':
         for row in safe_rows:
             steering = float(row['steering'])
             throttle = float(row['throttle'])
-            real_actions.append([steering, throttle])
 
             img_path = os.path.join(TUB_DIR, row['frame'])
             img = Image.open(img_path).convert('RGB')
@@ -109,8 +109,18 @@ if __name__ == '__main__':
             img_cropped = process_sim_image(img_tensor)
 
             with torch.no_grad():
-                latent = vae(img_cropped).squeeze(0).cpu() 
-                real_latents.append(latent)
+                latent = vae(img_cropped).squeeze(0).cpu()
+                # Flipped copy for 2x seed states
+                img_flipped = TF.hflip(img_cropped)
+                latent_flip = vae(img_flipped).squeeze(0).cpu()
+
+            # Original
+            real_latents.append(latent)
+            real_actions.append([steering, throttle])
+
+            # Flipped (negated steering)
+            real_latents.append(latent_flip)
+            real_actions.append([-steering, throttle])
 
     # 3. FATAL ERROR PREVENTION: Check if we actually have data left
     if len(real_latents) == 0:
