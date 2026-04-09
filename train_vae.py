@@ -77,7 +77,6 @@ class DonkeyTubDataset(Dataset):
 
         self.transform = transforms.Compose([
             transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.2, hue=0.02),
-            transforms.RandomPerspective(distortion_scale=0.1, p=0.3),
             transforms.RandomGrayscale(p=0.05),
             transforms.ToTensor(),
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5)),

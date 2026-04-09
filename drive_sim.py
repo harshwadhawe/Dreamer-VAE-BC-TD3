@@ -16,9 +16,12 @@ import gymnasium as gym
 import gym_donkeycar
 
 from core import (
-    MODEL_DIR,DeterministicEncoder, Actor, process_sim_image,
+    MODEL_DIR, DeterministicEncoder, Actor, process_sim_image,
     VAE_WEIGHTS, ACTOR_WEIGHTS, SIM_HOST, SIM_PORT, SIM_ENV, device
 )
+
+# Match the latent noise used during world model training
+LATENT_NOISE_STD = 0.005
 
 # --- INITIALIZATION ---
 print(f"Engaging Autopilot on: {device}")
@@ -66,6 +69,7 @@ def drive():
 
             with torch.no_grad():
                 latent_state = vae(img_cropped)
+                latent_state = latent_state + torch.randn_like(latent_state) * LATENT_NOISE_STD
                 action = actor(latent_state).squeeze(0).cpu().numpy()
 
             steering = float(action[0])

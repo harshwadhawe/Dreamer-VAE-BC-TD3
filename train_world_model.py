@@ -28,8 +28,8 @@ SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of mome
 BATCH_SIZE = BATCH_SIZE_WORLD
 EPOCHS = 50
 FLIP_EPISODE_OFFSET = 100000  # Offset for flipped episode IDs to prevent cross-contamination
-LATENT_NOISE_STD = 0.02       # Gaussian noise injected into latents during training
-ACTION_NOISE_STD = 0.01       # Gaussian noise injected into actions during training
+LATENT_NOISE_STD = 0.005      # Gaussian noise injected into latents during training
+ACTION_NOISE_STD = 0.003      # Gaussian noise injected into actions during training
 
 # --- TRAJECTORY DATASET ---
 class DonkeyTrajectoryDataset(Dataset):
