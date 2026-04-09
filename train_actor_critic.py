@@ -29,7 +29,8 @@ IMAGINATION_HORIZON = 15     # Slightly shorter horizon limits compounding physi
 BATCH_SIZE = BATCH_SIZE_ACTOR # 512 is great, drop to 256 if CUDA OOM occurs
 DREAM_EPOCHS = 1000           # Prevents the Actor from exploiting World Model loopholes
 GAMMA = 0.99                 # Prioritizes immediate survival over long-term planning
-STEERING_PENALTY = 0.1       # Discourages extreme steering in imagined trajectories   
+STEERING_PENALTY = 0.1       # Discourages extreme steering in imagined trajectories
+BC_WEIGHT = 2.0              # Behavioral cloning anchor weight (lower = more RL, higher = more imitation)
 
 if __name__ == '__main__':
     print(f"Using device: {device}")
@@ -186,7 +187,7 @@ if __name__ == '__main__':
         critic_loss = critic_loss / IMAGINATION_HORIZON
 
         # Blend RL Imagination with the Reality Anchor
-        total_actor_loss = actor_loss + (bc_loss * 10.0)
+        total_actor_loss = actor_loss + (bc_loss * BC_WEIGHT)
 
         actor_opt.zero_grad()
         total_actor_loss.backward() 
