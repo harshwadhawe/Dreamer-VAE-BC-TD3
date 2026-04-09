@@ -64,7 +64,7 @@ class DonkeyTrajectoryDataset(Dataset):
                 is_terminal = False
                 if i == len(rows) - 1 or int(rows[i+1].get('episode_id', 0)) != ep_id:
                     is_terminal = True
-                    reward = -10.0
+                    reward = -1.0
 
                 img = Image.open(img_path).convert('RGB')
                 img_tensor = self.transform(img).unsqueeze(0).to(device)
