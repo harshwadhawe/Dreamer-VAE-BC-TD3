@@ -13,7 +13,7 @@ Pipeline Dependency Graph:
 
     core.py (root - no dependencies)
       |
-      +-- collect_data.py --------------+
+      +-- collect_sim_data.py ----------+
       |
       +-- add_telemetry_to_tub.py       |  (data sources)
       |                                 |
@@ -36,13 +36,32 @@ import torch.nn as nn
 
 # --- UNIFIED CONFIGURATION ---
 
-# Paths
-TUB_NAME = "tub_1_26-04-08"  # Default tub name (can be overridden by auto_run.py CLI arg)
+# Simulator
+SIM_HOST = "127.0.0.1"
+SIM_PORT = 9091
+SIM_ENV = "donkey-generated-track-v0"  # Change this to your desired track/environment
+
+# donkey-minimonaco-track-v0
+# donkey-generated-roads-v0
+# donkey-generated-track-v0
+# donkey-warehouse-v0
+# donkey-circuit-launch-track-v0
+# donkey-warren-track-v0
+# donkey-roboracingleague-track-v0
+
+# Paths — derived from SIM_ENV so collect + training always agree
+_env_name = SIM_ENV.removeprefix("donkey-").removesuffix("-v0").replace("-", "_")
+TUB_NAME = f"tub_{_env_name}"
+# TUB_NAME = f"tub_"
 TUB_DIR = os.getenv('TUB_DIR', f'./data/{TUB_NAME}')
 MODEL_DIR = os.getenv('MODEL_DIR', f'./models/{TUB_NAME}')
 VAE_WEIGHTS = os.path.join(MODEL_DIR, 'vae_encoder.pth')
 WORLD_MODEL_WEIGHTS = os.path.join(MODEL_DIR, 'world_model.pth')
 ACTOR_WEIGHTS = os.path.join(MODEL_DIR, 'dreamer_actor.pth')
+
+# Training data cap — set to None to use all images
+MAX_TRAIN_IMAGES = 8000
+
 # Image preprocessing
 IMG_CROP_TOP = 40
 IMG_HEIGHT = 80
@@ -63,19 +82,6 @@ ENCODER_FLAT_DIM = ENCODER_CHANNELS[-1] * (IMG_HEIGHT // 16) * (IMG_WIDTH // 16)
 
 # Actor output scaling
 THROTTLE_CAP = 0.3
-
-# Simulator
-SIM_HOST = "127.0.0.1"
-SIM_PORT = 9091
-SIM_ENV = "donkey-generated-roads-v0"  # Change this to your desired track/environment
-
-# donkey-minimonaco-track-v0
-# donkey-generated-roads-v0 
-# donkey-generated-track-v0 
-# donkey-warehouse-v0 
-# donkey-circuit-launch-track-v0 
-# donkey-warren-track-v0 
-# donkey-roboracingleague-track-v0
 
 # --- UNIVERSAL HARDWARE SELECTOR ---
 if torch.cuda.is_available():

@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 from core import (
     DeterministicEncoder, TUB_DIR, MODEL_DIR, device,
     IMG_HEIGHT, IMG_WIDTH, IMG_CROP_TOP, LATENT_DIM, ENCODER_CHANNELS, ENCODER_FLAT_DIM,
-    DATASET_MULTIPLIER, BATCH_SIZE_VAE, NUM_WORKERS, PIN_MEMORY
+    DATASET_MULTIPLIER, BATCH_SIZE_VAE, NUM_WORKERS, PIN_MEMORY, MAX_TRAIN_IMAGES
 )
 
 # Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
@@ -70,8 +70,10 @@ class RandomMotionBlur:
 
 class DonkeyTubDataset(Dataset):
     def __init__(self, tub_dir):
-        self.img_paths = glob.glob(os.path.join(tub_dir, '**', '*.jpg'), recursive=True)
-        print(f"Found {len(self.img_paths)} images in {tub_dir}")
+        self.img_paths = sorted(glob.glob(os.path.join(tub_dir, '**', '*.jpg'), recursive=True))
+        if MAX_TRAIN_IMAGES is not None:
+            self.img_paths = self.img_paths[:MAX_TRAIN_IMAGES]
+        print(f"Found {len(self.img_paths)} images in {tub_dir}" + (f" (capped at {MAX_TRAIN_IMAGES})" if MAX_TRAIN_IMAGES else ""))
         if len(self.img_paths) == 0:
             raise ValueError("No images found! Check your TUB_DIR path.")
 
@@ -165,14 +167,12 @@ def vae_loss(recon_x, x, mu, logvar, beta):
     # Shape: [Batch_Size, LATENT_DIM]
     kl_div = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
     
-    # 3. FREE BITS: Allow 0.5 "Nats" of free information per dimension.
-    # If the KL penalty is below 0.5, we clamp it to 0.5. 
-    # This prevents the network from injecting pure static into unused dimensions.
+    # 3. FREE BITS: Allow 0.5 nats per dimension as a floor, enforced per-sample.
+    # Clamping the per-sample total (not per-dim) lets unused dims collapse freely
+    # while still preventing full posterior collapse.
     free_nats = 0.5
-    kl_div_clamped = torch.clamp(kl_div, min=free_nats)
-    
-    # Sum the clamped KL loss
-    kl_loss = torch.sum(kl_div_clamped)
+    kl_per_sample = kl_div.sum(dim=1)                                      # [B]
+    kl_loss = torch.clamp(kl_per_sample, min=free_nats * LATENT_DIM).sum()
     
     return recon_loss + (beta * kl_loss)
 
@@ -216,7 +216,7 @@ if __name__ == '__main__':
             optimizer.step()
             train_loss += loss.item()
 
-        avg_loss = train_loss / len(dataloader.dataset)
+        avg_loss = train_loss / len(dataloader)
         print(f"Epoch {epoch+1}/{EPOCHS} \t Loss: {avg_loss:.4f} \t Beta: {beta:.3f}")
 
         # Save Epoch Image

@@ -18,7 +18,7 @@ import sys
 import json
 import csv
 import glob
-from core import TUB_DIR, MODEL_DIR 
+from core import TUB_DIR
 def convert_donkey_catalog(tub_dir):
     catalog_files = glob.glob(os.path.join(tub_dir, '*.catalog'))
     if not catalog_files:

@@ -66,7 +66,7 @@ if __name__ == '__main__':
     run_script("train_vae.py", os_env)
     run_script("train_world_model.py", os_env)
     run_script("train_actor_critic.py", os_env)
-    run_script("export_pth_to_tflite.py", os_env, cli_args=[MODEL_DIR])
+    # run_script("export_pth_to_tflite.py", os_env, cli_args=[MODEL_DIR])
 
     print("========================================")
     print("PIPELINE COMPLETE!")

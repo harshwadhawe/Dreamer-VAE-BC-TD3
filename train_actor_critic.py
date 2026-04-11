@@ -22,7 +22,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 # --- THE UNIFIED HUB ---
-from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR
+from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
 IMAGINATION_HORIZON = 15     # Slightly shorter horizon limits compounding physics errors
@@ -70,10 +70,13 @@ if __name__ == '__main__':
     episodes_data = {}
     with open(os.path.join(TUB_DIR, "telemetry.csv"), 'r') as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        rows = list(reader)
+        if MAX_TRAIN_IMAGES is not None:
+            rows = rows[:MAX_TRAIN_IMAGES]
+        for row in rows:
             img_path = os.path.join(TUB_DIR, row['frame'])
             if not os.path.exists(img_path): continue
-            
+
             ep_id = int(row.get('episode_id', 0))
             if ep_id not in episodes_data:
                 episodes_data[ep_id] = []
@@ -166,17 +169,13 @@ if __name__ == '__main__':
             v_next = critic(z_next)
             steering_penalty = torch.pow(a_t[:, 0:1], 2) * STEERING_PENALTY
             target_return = r_t + GAMMA * v_next - steering_penalty
-            
-            # APPLY THE DISCOUNT FACTOR
-            discount = GAMMA ** t
-            actor_loss += -discount * target_return.mean()
 
-            # CRITIC LOSS: Pure environment value (No steering penalty here)
+            actor_loss += -target_return.mean()
+
+            # CRITIC LOSS: same shaped objective as actor so value estimates are consistent
             current_v = critic(z_t.detach())
             v_next_detached = critic(z_next.detach())
-            
-            # Remove the `- steering_penalty.detach()` from this line
-            critic_target = r_t + GAMMA * v_next_detached 
+            critic_target = r_t + GAMMA * v_next_detached - steering_penalty.detach()
             
             critic_loss += nn.functional.mse_loss(current_v, critic_target.detach())
 

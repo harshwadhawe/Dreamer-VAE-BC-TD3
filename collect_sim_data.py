@@ -19,7 +19,10 @@ import glob
 import gymnasium as gym
 import gym_donkeycar
 
-from core import TUB_DIR, SIM_HOST, SIM_PORT, SIM_ENV, THROTTLE_CAP
+from core import SIM_HOST, SIM_PORT, SIM_ENV, THROTTLE_CAP
+
+_env_name = SIM_ENV.removeprefix("donkey-").removesuffix("-v0").replace("-", "_")
+TUB_DIR = f"./data/tub_{_env_name}"
 
 HEADER = ['frame', 'steering', 'throttle', 'episode_id', 'reward', 'speed', 'cte']
 

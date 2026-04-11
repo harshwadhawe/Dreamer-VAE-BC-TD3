@@ -21,7 +21,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 import numpy as np
 
-from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP
+from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
 SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
@@ -50,6 +50,8 @@ class DonkeyTrajectoryDataset(Dataset):
         with open(telemetry_path, 'r') as f:
             reader = csv.DictReader(f)
             rows = list(reader)
+            if MAX_TRAIN_IMAGES is not None:
+                rows = rows[:MAX_TRAIN_IMAGES]
 
             for i, row in enumerate(rows):
                 img_path = os.path.join(tub_dir, row['frame'])
@@ -62,9 +64,9 @@ class DonkeyTrajectoryDataset(Dataset):
                 reward = throttle * 1.0 - abs(steering) * 0.1
 
                 is_terminal = False
-                if i == len(rows) - 1 or int(rows[i+1].get('episode_id', 0)) != ep_id:
+                if i < len(rows) - 1 and int(rows[i+1].get('episode_id', 0)) != ep_id:
                     is_terminal = True
-                    reward = -1.0
+                    reward = -THROTTLE_CAP  # scale-consistent penalty (~-0.3 vs normal ~0.1-0.3)
 
                 img = Image.open(img_path).convert('RGB')
                 img_tensor = self.transform(img).unsqueeze(0).to(device)
