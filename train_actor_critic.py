@@ -22,7 +22,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 # --- THE UNIFIED HUB ---
-from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR, MAX_TRAIN_IMAGES
+from core import DeterministicEncoder, Actor, RSSM, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, STOCH_DIM, RSSM_STATE_DIM, BATCH_SIZE_ACTOR, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
 IMAGINATION_HORIZON = 15     # Slightly shorter horizon limits compounding physics errors
@@ -45,8 +45,8 @@ if __name__ == '__main__':
     vae.requires_grad_(False)
     print(f"  Loaded {VAE_WEIGHTS}")
 
-    print("Loading Frozen World Model...")
-    world_model = WorldModel().to(device)
+    print("Loading Frozen RSSM World Model...")
+    world_model = RSSM().to(device)
     world_model.load_state_dict(torch.load(WORLD_MODEL_WEIGHTS, map_location=device))
     world_model.eval()
     world_model.requires_grad_(False)
@@ -82,105 +82,115 @@ if __name__ == '__main__':
                 episodes_data[ep_id] = []
             episodes_data[ep_id].append(row)
 
-    real_latents = []
+    real_h      = []  # RSSM deterministic hidden states
+    real_z      = []  # RSSM stochastic states
     real_actions = []
 
     # 2. The Safety Margin
-    FRAMES_TO_DROP_AT_END = 30 
-    
+    FRAMES_TO_DROP_AT_END = 30
+
     # We want at least 10 usable "safe" frames from an episode to consider it valid
-    MIN_VALID_EP_LEN = FRAMES_TO_DROP_AT_END + 10 
+    MIN_VALID_EP_LEN = FRAMES_TO_DROP_AT_END + 10
 
     skipped_micro_episodes = 0
     valid_episodes = 0
 
     for ep_id, rows in episodes_data.items():
-        # BUG FIX: Explicitly handle and track episodes that are too short
         if len(rows) < MIN_VALID_EP_LEN:
             skipped_micro_episodes += 1
-            continue 
-            
+            continue
+
         valid_episodes += 1
         safe_rows = rows[:-FRAMES_TO_DROP_AT_END]
-        
-        for row in safe_rows:
-            steering = float(row['steering'])
-            throttle = float(row['throttle'])
 
-            img_path = os.path.join(TUB_DIR, row['frame'])
-            img = Image.open(img_path).convert('RGB')
-            img_tensor = transform(img).unsqueeze(0).to(device)
-            img_cropped = process_sim_image(img_tensor)
+        # Run two passes per episode: original and horizontally flipped.
+        # Warm up (h, z) sequentially so seed states carry real episode context.
+        for flip in [False, True]:
+            h = torch.zeros(1, HIDDEN_DIM, device=device)
+            z = torch.zeros(1, STOCH_DIM, device=device)
+            a_prev = torch.zeros(1, ACTION_DIM, device=device)
 
-            with torch.no_grad():
-                latent = vae(img_cropped).squeeze(0).cpu()
-                # Flipped copy for 2x seed states
-                img_flipped = TF.hflip(img_cropped)
-                latent_flip = vae(img_flipped).squeeze(0).cpu()
+            for row in safe_rows:
+                steering = float(row['steering'])
+                throttle = float(row['throttle'])
+                if flip:
+                    steering = -steering
 
-            # Original
-            real_latents.append(latent)
-            real_actions.append([steering, throttle])
+                img_path = os.path.join(TUB_DIR, row['frame'])
+                img = Image.open(img_path).convert('RGB')
+                img_tensor = transform(img).unsqueeze(0).to(device)
+                img_cropped = process_sim_image(img_tensor)
+                if flip:
+                    img_cropped = TF.hflip(img_cropped)
 
-            # Flipped (negated steering)
-            real_latents.append(latent_flip)
-            real_actions.append([-steering, throttle])
+                with torch.no_grad():
+                    x_t = vae(img_cropped)
+                    z, h, _ = world_model.observe_step(x_t, a_prev, z, h)
 
-    # 3. FATAL ERROR PREVENTION: Check if we actually have data left
-    if len(real_latents) == 0:
+                real_h.append(h.squeeze(0).cpu())
+                real_z.append(z.squeeze(0).cpu())
+                real_actions.append([steering, throttle])
+
+                a_prev = torch.tensor([[steering, throttle]], device=device)
+
+    # 3. FATAL ERROR PREVENTION
+    if len(real_h) == 0:
         print("\n❌ FATAL ERROR: No valid frames survived the crash filter!")
         print(f"Total episodes found: {len(episodes_data)}")
         print(f"Micro-episodes discarded (< {MIN_VALID_EP_LEN} frames): {skipped_micro_episodes}")
         print("You must record longer, safer driving sessions before training.")
         exit(1)
 
-    real_latents = torch.stack(real_latents) 
+    real_h       = torch.stack(real_h)
+    real_z       = torch.stack(real_z)
     real_actions = torch.tensor(real_actions, dtype=torch.float32)
-    
+
     print(f"Discarded {skipped_micro_episodes} micro-episodes (too short).")
     print(f"Purged {valid_episodes * FRAMES_TO_DROP_AT_END} crash frames from valid episodes.")
-    print(f"Loaded {len(real_latents)} purely safe track positions for the BC Anchor.")
+    print(f"Loaded {len(real_h)} warmed-up RSSM seed states (orig + flipped).")
 
     def get_seed_states(batch_size):
-        idx = torch.randint(0, len(real_latents), (batch_size,))
-        return real_latents[idx].to(device), real_actions[idx].to(device)
+        idx = torch.randint(0, len(real_h), (batch_size,))
+        return (real_h[idx].to(device),
+                real_z[idx].to(device),
+                real_actions[idx].to(device))
     
     # --- DREAMING LOOP ---
     print(f"\nInitiating Imagination Engine ({DREAM_EPOCHS} dream epochs)...")
     print("-" * 80)
 
     for epoch in range(DREAM_EPOCHS):
-        z_t, true_a_t = get_seed_states(BATCH_SIZE)
-        h_t = torch.zeros(BATCH_SIZE, HIDDEN_DIM).to(device)
+        h_t, z_t, true_a_t = get_seed_states(BATCH_SIZE)
 
         actor_loss = 0
         critic_loss = 0
         bc_loss = 0
 
         for t in range(IMAGINATION_HORIZON):
-            a_t = actor(z_t)
-            
-            # TD3+BC Anchor: Penalize straying from human driving on step 0
+            state_t = torch.cat([h_t, z_t], dim=-1)
+            a_t = actor(state_t)
+
+            # TD3+BC Anchor: penalize deviation from human action at step 0
             if t == 0:
                 bc_loss = nn.functional.mse_loss(a_t, true_a_t)
 
-            z_next, r_t, h_next = world_model.forward_step(z_t, a_t, h_t)
+            # Imagination step using prior (no real observation)
+            z_next, r_t, h_next, state_next = world_model.imagine_step(z_t, a_t, h_t)
 
-            v_next = critic(z_next)
+            v_next = critic(state_next)
             steering_penalty = torch.pow(a_t[:, 0:1], 2) * STEERING_PENALTY
             target_return = r_t + GAMMA * v_next - steering_penalty
 
             actor_loss += -target_return.mean()
 
-            # CRITIC LOSS: same shaped objective as actor so value estimates are consistent
-            current_v = critic(z_t.detach())
-            v_next_detached = critic(z_next.detach())
+            # Critic: same shaped objective so value estimates match what actor optimises
+            current_v = critic(state_t.detach())
+            v_next_detached = critic(state_next.detach())
             critic_target = r_t + GAMMA * v_next_detached - steering_penalty.detach()
-            
+
             critic_loss += nn.functional.mse_loss(current_v, critic_target.detach())
 
-            z_t = z_next
-            h_t = h_next
+            z_t, h_t = z_next, h_next
 
         actor_loss = actor_loss / IMAGINATION_HORIZON
         critic_loss = critic_loss / IMAGINATION_HORIZON

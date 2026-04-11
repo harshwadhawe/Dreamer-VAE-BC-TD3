@@ -5,9 +5,9 @@ Requires: vae_encoder.pth + dreamer_actor.pth (from training pipeline),
           running simulator on SIM_HOST:SIM_PORT
 Downstream: None (end of pipeline - inference/deployment)
 
-Loads frozen VAE encoder and trained Actor, connects to the simulator via gym-donkeycar,
-and runs a real-time autonomous driving loop. Camera image -> VAE latent -> Actor action
--> steering/throttle. Resets on crash detection.
+Loads frozen VAE encoder, RSSM world model, and trained Actor. Runs a real-time loop:
+camera image -> VAE latent -> RSSM posterior update (h, z) -> Actor action -> steering/throttle.
+RSSM hidden state resets on crash detection.
 """
 
 import time
@@ -16,24 +16,24 @@ import gymnasium as gym
 import gym_donkeycar
 
 from core import (
-    MODEL_DIR, DeterministicEncoder, Actor, process_sim_image,
-    VAE_WEIGHTS, ACTOR_WEIGHTS, SIM_HOST, SIM_PORT, SIM_ENV, device
+    MODEL_DIR, DeterministicEncoder, Actor, RSSM, process_sim_image,
+    VAE_WEIGHTS, ACTOR_WEIGHTS, WORLD_MODEL_WEIGHTS, SIM_HOST, SIM_PORT, SIM_ENV,
+    device, HIDDEN_DIM, STOCH_DIM, ACTION_DIM
 )
-
-# Match the latent noise used during world model training
-LATENT_NOISE_STD = 0.005
 
 # --- INITIALIZATION ---
 print(f"Engaging Autopilot on: {device}")
-
-
-print(f"\n\nUsing model directory: {MODEL_DIR}\n\n")
-
+print(f"\nUsing model directory: {MODEL_DIR}\n")
 
 print("Loading VAE Brain...")
 vae = DeterministicEncoder().to(device)
 vae.load_state_dict(torch.load(VAE_WEIGHTS, map_location=device))
 vae.eval()
+
+print("Loading RSSM World Model...")
+world_model = RSSM().to(device)
+world_model.load_state_dict(torch.load(WORLD_MODEL_WEIGHTS, map_location=device))
+world_model.eval()
 
 print("Loading Dreamer Reflexes...")
 actor = Actor().to(device)
@@ -61,6 +61,14 @@ def drive():
     print("Press CTRL+C in this terminal to stop.")
     print("="*40 + "\n")
 
+    def _reset_rssm_state():
+        h = torch.zeros(1, HIDDEN_DIM, device=device)
+        z = torch.zeros(1, STOCH_DIM, device=device)
+        a = torch.zeros(1, ACTION_DIM, device=device)
+        return h, z, a
+
+    h_t, z_t, a_prev = _reset_rssm_state()
+
     try:
         while True:
             img_tensor = torch.tensor(obs.transpose(2, 0, 1), dtype=torch.float32).unsqueeze(0) / 255.0
@@ -68,18 +76,21 @@ def drive():
             img_cropped = process_sim_image(img_tensor)
 
             with torch.no_grad():
-                latent_state = vae(img_cropped)
-                latent_state = latent_state + torch.randn_like(latent_state) * LATENT_NOISE_STD
-                action = actor(latent_state).squeeze(0).cpu().numpy()
+                x_t = vae(img_cropped)
+                # Posterior update: incorporate real observation into RSSM state
+                z_t, h_t, state = world_model.observe_step(x_t, a_prev, z_t, h_t)
+                action = actor(state).squeeze(0).cpu().numpy()
 
             steering = float(action[0])
             throttle = float(action[1])
+            a_prev = torch.tensor([[steering, throttle]], device=device)
 
             obs, reward, terminated, truncated, info = env.step([steering, throttle])
 
             if terminated or truncated:
-                print("Crash detected! The AI is resetting...")
+                print("Crash detected! Resetting RSSM state...")
                 obs, info = env.reset()
+                h_t, z_t, a_prev = _reset_rssm_state()
 
             time.sleep(0.05)
 

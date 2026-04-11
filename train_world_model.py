@@ -21,12 +21,13 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 import numpy as np
 
-from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP, MAX_TRAIN_IMAGES
+from core import DeterministicEncoder, RSSM, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
-SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
+SEQ_LEN = 32          # GRU memory window (~1.5s)
 BATCH_SIZE = BATCH_SIZE_WORLD
 EPOCHS = 50
+KL_SCALE = 0.1        # Weight on KL(posterior || prior) — start small, raise if prior drifts
 FLIP_EPISODE_OFFSET = 100000  # Offset for flipped episode IDs to prevent cross-contamination
 LATENT_NOISE_STD = 0.005      # Gaussian noise injected into latents during training
 ACTION_NOISE_STD = 0.003      # Gaussian noise injected into actions during training
@@ -147,48 +148,52 @@ if __name__ == '__main__':
     print(f"Batches per epoch: {len(dataloader)}")
 
     # --- TRAINING LOOP ---
-    world_model = WorldModel().to(device)
+    world_model = RSSM().to(device)
     total_params = sum(p.numel() for p in world_model.parameters())
-    print(f"World Model parameters: {total_params:,}")
+    print(f"RSSM parameters: {total_params:,}")
     optimizer = optim.Adam(world_model.parameters(), lr=1e-3)
     criterion = nn.MSELoss()
 
-    print(f"\nStarting World Model Training ({EPOCHS} epochs)...")
+    print(f"\nStarting RSSM Training ({EPOCHS} epochs, KL_SCALE={KL_SCALE})...")
     print("-" * 80)
     for epoch in range(EPOCHS):
         world_model.train()
-        total_loss, dyn_loss_total, rew_loss_total = 0, 0, 0
+        total_loss_sum, dyn_loss_sum, rew_loss_sum, kl_loss_sum = 0, 0, 0, 0
 
         for z_seq, a_seq, r_seq in dataloader:
-            z_seq, a_seq, r_seq = z_seq.to(device), a_seq.to(device), r_seq.to(device)
+            z_seq = z_seq.to(device)
+            a_seq = a_seq.to(device)
+            r_seq = r_seq.to(device)
 
             optimizer.zero_grad()
-            z_pred, r_pred = world_model(z_seq, a_seq)
-            # z_target wants the NEXT state
-            z_target = z_seq[:, 1:, :]
-            
-            # r_target wants the CURRENT reward associated with a_t
-            r_target = r_seq[:, :-1, :] 
 
-            dynamics_loss = criterion(z_pred, z_target)
-            reward_loss = criterion(r_pred, r_target)
-            loss = dynamics_loss + (reward_loss * 5.0)
+            # RSSM forward: posterior at every step, returns reconstruction + KL
+            # pred_latents: [B, T, LATENT_DIM] — reconstruct current VAE latent from (h_t, z_t)
+            # pred_rewards: [B, T, 1]          — predict current reward
+            pred_latents, pred_rewards, kl = world_model(z_seq, a_seq)
+
+            dynamics_loss = criterion(pred_latents, z_seq)
+            reward_loss   = criterion(pred_rewards, r_seq)
+            loss = dynamics_loss + reward_loss * 5.0 + kl * KL_SCALE
 
             loss.backward()
-            
-            # PROTECT THE OPTIMIZER FROM TERMINAL PENALTY SPIKES
             torch.nn.utils.clip_grad_norm_(world_model.parameters(), max_norm=5.0)
-
             optimizer.step()
 
-            total_loss += loss.item()
-            dyn_loss_total += dynamics_loss.item()
-            rew_loss_total += reward_loss.item()
+            total_loss_sum += loss.item()
+            dyn_loss_sum   += dynamics_loss.item()
+            rew_loss_sum   += reward_loss.item()
+            kl_loss_sum    += kl.item()
 
-        print(f"Epoch {epoch+1}/{EPOCHS} | Total Loss: {total_loss/len(dataloader):.4f} | Dyn Loss: {dyn_loss_total/len(dataloader):.4f} | Rew Loss: {rew_loss_total/len(dataloader):.4f}")
+        n = len(dataloader)
+        print(f"Epoch {epoch+1}/{EPOCHS} | "
+              f"Loss: {total_loss_sum/n:.4f} | "
+              f"Dyn: {dyn_loss_sum/n:.4f} | "
+              f"Rew: {rew_loss_sum/n:.4f} | "
+              f"KL: {kl_loss_sum/n:.4f}")
 
     print("-" * 80)
-    print("Training Complete. Exporting World Model...")
+    print("Training Complete. Exporting RSSM...")
     torch.save(world_model.state_dict(), os.path.join(MODEL_DIR, "world_model.pth"))
     print(f"  Saved world_model.pth to {MODEL_DIR}")
     print("Done! Ready for Actor-Critic dreaming.")
