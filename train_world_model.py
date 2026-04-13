@@ -1,13 +1,15 @@
 """
-Step 2: Train a GRU-based world model (RSSM) to predict latent dynamics and rewards.
+Step 2: Train the RSSM world model.
 
 Requires: vae_encoder.pth (from train_vae.py), tub with telemetry.csv and images
 Downstream: train_actor_critic.py (uses frozen world_model.pth)
 
 Freezes the VAE encoder and converts all images to latent vectors. Builds episode-aware
-sequences (SEQ_LEN=32, ~1.5s memory) that never cross episode boundaries. Trains a
-GRUCell(34->256) to predict next latent state and reward. Reward = throttle - |steering|*0.1
-with terminal penalty (-10) at crash frames. Exports world_model.pth.
+sequences (SEQ_LEN=32, ~1.5s memory) that never cross episode boundaries. Trains the
+full RSSM (prior + posterior + reward predictor) with:
+  - KL divergence loss: KL(posterior q(s|h,enc) || prior p(s|h))
+  - Reward prediction loss: MSE
+Exports world_model.pth.
 """
 
 import os
@@ -21,15 +23,22 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 import numpy as np
 
-from core import DeterministicEncoder, WorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP, MAX_TRAIN_IMAGES
+from torch.distributions import Normal, kl_divergence
+
+from core import DeterministicEncoder, RSSMWorldModel, process_sim_image, TUB_DIR, VAE_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_WORLD, PIN_MEMORY, THROTTLE_CAP, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
-SEQ_LEN = 32     # UPGRADE: Gives the physics engine a 1.5-second memory of momentum
+SEQ_LEN = 32     # Gives the physics engine a 1.5-second memory of momentum
 BATCH_SIZE = BATCH_SIZE_WORLD
-EPOCHS = 50
+EPOCHS = 100                   # RSSM needs more epochs than deterministic (4 loss signals to balance)
+WM_DATASET_MULTIPLIER = 3     # Noise injection makes each copy unique — cheap data augmentation
 FLIP_EPISODE_OFFSET = 100000  # Offset for flipped episode IDs to prevent cross-contamination
 LATENT_NOISE_STD = 0.005      # Gaussian noise injected into latents during training
 ACTION_NOISE_STD = 0.003      # Gaussian noise injected into actions during training
+KL_WEIGHT_MAX = 1.0            # KL annealed up from 0 to prevent early posterior collapse
+KL_WARMUP_EPOCHS = 10          # Epochs to ramp KL weight from 0 → KL_WEIGHT_MAX
+KL_FREE_NATS = 1.0             # Per-sample floor on KL — prevents full posterior collapse
+KL_BALANCE_ALPHA = 0.8         # V2: prior gets 80% learning pressure, posterior 20% regularization
 
 # --- TRAJECTORY DATASET ---
 class DonkeyTrajectoryDataset(Dataset):
@@ -147,45 +156,64 @@ if __name__ == '__main__':
     print(f"Batches per epoch: {len(dataloader)}")
 
     # --- TRAINING LOOP ---
-    world_model = WorldModel().to(device)
+    world_model = RSSMWorldModel().to(device)
     total_params = sum(p.numel() for p in world_model.parameters())
-    print(f"World Model parameters: {total_params:,}")
-    optimizer = optim.Adam(world_model.parameters(), lr=1e-3)
-    criterion = nn.MSELoss()
+    print(f"RSSM World Model parameters: {total_params:,}")
+    optimizer = optim.Adam(world_model.parameters(), lr=6e-4)
 
-    print(f"\nStarting World Model Training ({EPOCHS} epochs)...")
+    print(f"\nStarting RSSM World Model Training ({EPOCHS} epochs)...")
     print("-" * 80)
     for epoch in range(EPOCHS):
         world_model.train()
-        total_loss, dyn_loss_total, rew_loss_total = 0, 0, 0
+        total_loss, kl_loss_total, rew_loss_total, obs_loss_total = 0, 0, 0, 0
+
+        # KL annealing: ramp from 0 → KL_WEIGHT_MAX over warmup epochs
+        kl_weight = min(KL_WEIGHT_MAX, KL_WEIGHT_MAX * epoch / max(KL_WARMUP_EPOCHS, 1))
 
         for z_seq, a_seq, r_seq in dataloader:
             z_seq, a_seq, r_seq = z_seq.to(device), a_seq.to(device), r_seq.to(device)
 
             optimizer.zero_grad()
-            z_pred, r_pred = world_model(z_seq, a_seq)
-            # z_target wants the NEXT state
-            z_target = z_seq[:, 1:, :]
-            
-            # r_target wants the CURRENT reward associated with a_t
-            r_target = r_seq[:, :-1, :] 
 
-            dynamics_loss = criterion(z_pred, z_target)
-            reward_loss = criterion(r_pred, r_target)
-            loss = dynamics_loss + (reward_loss * 5.0)
+            # RSSM forward: enc_seq = z_seq (VAE encodings are the observations)
+            prior_stats, post_stats, r_pred, obs_pred = world_model(z_seq, a_seq)
+
+            # V2 KL balancing: split into prior-training and posterior-regularization terms
+            # α=0.8 → prior gets 80% pressure to match posterior (accurate imagination)
+            #        → posterior gets 20% pressure toward prior (light regularization)
+            prior_dist = Normal(prior_stats[0], prior_stats[1])
+            post_dist  = Normal(post_stats[0],  post_stats[1])
+
+            # Prior learning: KL(stopgrad(post) || prior) — trains prior to match posterior
+            prior_dist_detached = Normal(prior_stats[0].detach(), prior_stats[1].detach())
+            post_dist_detached  = Normal(post_stats[0].detach(),  post_stats[1].detach())
+
+            kl_prior = kl_divergence(post_dist_detached, prior_dist).sum(-1)   # [B, T]
+            kl_post  = kl_divergence(post_dist, prior_dist_detached).sum(-1)   # [B, T]
+
+            # Free bits applied per-step, then balanced mix
+            kl_loss = (KL_BALANCE_ALPHA * torch.clamp(kl_prior, min=KL_FREE_NATS).mean()
+                     + (1 - KL_BALANCE_ALPHA) * torch.clamp(kl_post, min=KL_FREE_NATS).mean())
+
+            # Reward loss: r_pred[t] encodes a_{t-1}, matches r_seq[t-1]
+            reward_loss = nn.functional.mse_loss(r_pred[:, 1:], r_seq[:, :-1])
+
+            # Observation reconstruction: forces posterior to encode visual info in s_t
+            obs_loss = nn.functional.mse_loss(obs_pred, z_seq)
+
+            loss = (kl_weight * kl_loss) + (reward_loss * 5.0) + obs_loss
 
             loss.backward()
-            
-            # PROTECT THE OPTIMIZER FROM TERMINAL PENALTY SPIKES
             torch.nn.utils.clip_grad_norm_(world_model.parameters(), max_norm=5.0)
-
             optimizer.step()
 
-            total_loss += loss.item()
-            dyn_loss_total += dynamics_loss.item()
+            total_loss     += loss.item()
+            kl_loss_total  += kl_loss.item()
             rew_loss_total += reward_loss.item()
+            obs_loss_total += obs_loss.item()
 
-        print(f"Epoch {epoch+1}/{EPOCHS} | Total Loss: {total_loss/len(dataloader):.4f} | Dyn Loss: {dyn_loss_total/len(dataloader):.4f} | Rew Loss: {rew_loss_total/len(dataloader):.4f}")
+        n = len(dataloader)
+        print(f"Epoch {epoch+1}/{EPOCHS} | Total: {total_loss/n:.4f} | KL: {kl_loss_total/n:.4f} | Rew: {rew_loss_total/n:.4f} | Obs: {obs_loss_total/n:.4f} | kl_w: {kl_weight:.3f}")
 
     print("-" * 80)
     print("Training Complete. Exporting World Model...")

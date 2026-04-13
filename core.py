@@ -68,14 +68,19 @@ IMG_HEIGHT = 80
 IMG_WIDTH = 128
 
 # Model dimensions
-LATENT_DIM = 32
+LATENT_DIM = 32          # VAE encoder output (observation encoding)
 ACTION_DIM = 2
 HIDDEN_DIM = 256
 ENCODER_CHANNELS = [3, 32, 64, 128, 256]
-ACTOR_HIDDEN = 64
-CRITIC_HIDDEN = 64
+ACTOR_HIDDEN = 128
+CRITIC_HIDDEN = 128
 DYNAMICS_HIDDEN = 128
 REWARD_HIDDEN = 64
+
+# RSSM-specific dimensions
+STOCH_DIM = 32           # Stochastic RSSM state
+DETER_DIM = HIDDEN_DIM   # Deterministic GRU state (256)
+STATE_DIM = DETER_DIM + STOCH_DIM  # Full model state for actor/critic (288)
 
 # After 4 stride-2 convs on (IMG_HEIGHT x IMG_WIDTH), flatten size = 256 * 5 * 8
 ENCODER_FLAT_DIM = ENCODER_CHANNELS[-1] * (IMG_HEIGHT // 16) * (IMG_WIDTH // 16)
@@ -144,14 +149,15 @@ class Actor(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(LATENT_DIM, ACTOR_HIDDEN), nn.ELU(),
+            nn.Linear(STATE_DIM, ACTOR_HIDDEN), nn.ELU(),
             nn.Linear(ACTOR_HIDDEN, ACTOR_HIDDEN), nn.ELU(),
             nn.Linear(ACTOR_HIDDEN, ACTION_DIM)
         )
 
-    def forward(self, z):
-        raw_action = self.net(z)
-        steer = torch.tanh(raw_action[:, 0:1]) # The smooth curve
+    def forward(self, state):
+        """state: cat(h_t, s_t), shape [B, STATE_DIM]"""
+        raw_action = self.net(state)
+        steer = torch.tanh(raw_action[:, 0:1])
         throttle = torch.sigmoid(raw_action[:, 1:2]) * THROTTLE_CAP
         return torch.cat([steer, throttle], dim=-1)
 
@@ -159,52 +165,138 @@ class Critic(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(LATENT_DIM, CRITIC_HIDDEN), nn.ELU(),
+            nn.Linear(STATE_DIM, CRITIC_HIDDEN), nn.ELU(),
             nn.Linear(CRITIC_HIDDEN, CRITIC_HIDDEN), nn.ELU(),
             nn.Linear(CRITIC_HIDDEN, 1)
         )
 
-    def forward(self, z):
-        return self.net(z)
+    def forward(self, state):
+        """state: cat(h_t, s_t), shape [B, STATE_DIM]"""
+        return self.net(state)
 
-class WorldModel(nn.Module):
+class RSSMWorldModel(nn.Module):
+    """
+    Recurrent State Space Model (RSSM) from DreamerV1.
+
+    State = (h_t, s_t) where:
+      h_t — deterministic GRU hidden state (DETER_DIM)
+      s_t — stochastic latent sampled from prior or posterior (STOCH_DIM)
+
+    Training uses posterior q(s_t | h_t, enc_t) with real observations.
+    Imagination uses prior p(s_t | h_t) — no observation needed.
+    Actor/Critic see cat(h_t, s_t) = STATE_DIM.
+    """
     def __init__(self):
         super().__init__()
-        self.rnn = nn.GRUCell(input_size=LATENT_DIM + ACTION_DIM, hidden_size=HIDDEN_DIM)
-        self.dynamics_predictor = nn.Sequential(
-            nn.Linear(HIDDEN_DIM, DYNAMICS_HIDDEN), nn.ReLU(), nn.Linear(DYNAMICS_HIDDEN, LATENT_DIM)
+        # Recurrent: h_t = GRU(cat(s_{t-1}, a_{t-1}), h_{t-1})
+        self.recurrent = nn.GRUCell(STOCH_DIM + ACTION_DIM, DETER_DIM)
+
+        # V2: LayerNorm on GRU output — stabilizes h_t before it feeds into all heads
+        self.h_norm = nn.LayerNorm(DETER_DIM)
+
+        # Prior p(s_t | h_t) — for imagination (no observation)
+        self.prior_net = nn.Sequential(
+            nn.Linear(DETER_DIM, DETER_DIM), nn.ELU(),
+            nn.Linear(DETER_DIM, STOCH_DIM * 2)  # mu + log_std
         )
+
+        # Posterior q(s_t | h_t, enc_t) — for training with real observations
+        self.posterior_net = nn.Sequential(
+            nn.Linear(DETER_DIM + LATENT_DIM, DETER_DIM), nn.ELU(),
+            nn.Linear(DETER_DIM, STOCH_DIM * 2)  # mu + log_std
+        )
+
+        # Reward predictor r_t = f(h_t, s_t)
         self.reward_predictor = nn.Sequential(
-            nn.Linear(HIDDEN_DIM, REWARD_HIDDEN), nn.ReLU(), nn.Linear(REWARD_HIDDEN, 1)
+            nn.Linear(STATE_DIM, REWARD_HIDDEN), nn.ELU(),
+            nn.Linear(REWARD_HIDDEN, 1)
         )
 
-    def forward(self, z_seq, a_seq):
+        # Observation predictor: enc_t = g(h_t, s_t)
+        # Forces the posterior to encode observation-dependent info in s_t.
+        # Without this, s_t collapses to prior noise since reward is action-dependent only.
+        self.obs_predictor = nn.Sequential(
+            nn.Linear(STATE_DIM, DYNAMICS_HIDDEN), nn.ELU(),
+            nn.Linear(DYNAMICS_HIDDEN, LATENT_DIM)
+        )
+
+    def _reparameterize(self, mu, log_std):
+        std = torch.exp(log_std.clamp(-4, 4))
+        eps = torch.randn_like(mu)
+        return mu + eps * std, mu, std
+
+    def get_prior(self, h):
+        """Prior distribution p(s | h). Returns (s_sample, mu, std)."""
+        out = self.prior_net(h)
+        mu, log_std = out.chunk(2, dim=-1)
+        return self._reparameterize(mu, log_std)
+
+    def get_posterior(self, h, enc):
+        """Posterior distribution q(s | h, enc). Returns (s_sample, mu, std)."""
+        out = self.posterior_net(torch.cat([h, enc], dim=-1))
+        mu, log_std = out.chunk(2, dim=-1)
+        return self._reparameterize(mu, log_std)
+
+    def forward(self, enc_seq, a_seq):
         """
-        Unrolls the RNN over a sequence.
-        z_seq: [Batch, Seq_Len, Latent_Dim]
-        a_seq: [Batch, Seq_Len, Action_Dim]
+        Full sequence rollout using posteriors — for world model training.
+        enc_seq: [B, T, LATENT_DIM]  — VAE-encoded observations
+        a_seq:   [B, T, ACTION_DIM]
+        Returns: prior_stats (mu, std), post_stats (mu, std),
+                 reward_preds [B, T, 1], obs_preds [B, T, LATENT_DIM]
         """
-        batch_size, seq_len, _ = z_seq.shape
-        h = torch.zeros(batch_size, HIDDEN_DIM).to(z_seq.device)
+        batch_size, seq_len, _ = enc_seq.shape
+        h = torch.zeros(batch_size, DETER_DIM, device=enc_seq.device)
+        s = torch.zeros(batch_size, STOCH_DIM, device=enc_seq.device)
 
-        predicted_latents = []
-        predicted_rewards = []
+        prior_mus, prior_stds = [], []
+        post_mus, post_stds = [], []
+        reward_preds = []
+        obs_preds = []
 
-        for t in range(seq_len - 1):
-            current_z = z_seq[:, t, :]
-            current_a = a_seq[:, t, :]
+        for t in range(seq_len):
+            # Recurrent update: uses prev s and prev action
+            a_prev = a_seq[:, t - 1] if t > 0 else torch.zeros(batch_size, ACTION_DIM, device=enc_seq.device)
+            h = self.h_norm(self.recurrent(torch.cat([s, a_prev], dim=-1), h))
 
-            rnn_input = torch.cat([current_z, current_a], dim=-1)
-            h = self.rnn(rnn_input, h)
+            # Prior (no observation)
+            _, p_mu, p_std = self.get_prior(h)
 
-            predicted_latents.append(self.dynamics_predictor(h))
-            predicted_rewards.append(self.reward_predictor(h))
+            # Posterior (with observation)
+            s, q_mu, q_std = self.get_posterior(h, enc_seq[:, t])
 
-        return torch.stack(predicted_latents, dim=1), torch.stack(predicted_rewards, dim=1)
+            state = torch.cat([h, s], dim=-1)
+            reward_preds.append(self.reward_predictor(state))
+            obs_preds.append(self.obs_predictor(state))
+            prior_mus.append(p_mu);  prior_stds.append(p_std)
+            post_mus.append(q_mu);   post_stds.append(q_std)
 
-    def forward_step(self, z_t, a_t, h_t):
-        rnn_input = torch.cat([z_t, a_t], dim=-1)
-        h_next = self.rnn(rnn_input, h_t)
-        z_next = self.dynamics_predictor(h_next)
-        reward = self.reward_predictor(h_next)
-        return z_next, reward, h_next
+        prior_stats = (torch.stack(prior_mus, 1), torch.stack(prior_stds, 1))
+        post_stats  = (torch.stack(post_mus, 1),  torch.stack(post_stds, 1))
+        return prior_stats, post_stats, torch.stack(reward_preds, 1), torch.stack(obs_preds, 1)
+
+    def forward_step(self, s_t, a_t, h_t):
+        """
+        Single imagination step using prior — no observation needed.
+        Returns (s_next, reward_t, h_next).
+        Reward is predicted from the NEXT state (h_next encodes a_t,
+        matching training where r_pred[t] corresponds to a_{t-1}).
+        """
+        h_next = self.h_norm(self.recurrent(torch.cat([s_t, a_t], dim=-1), h_t))
+        s_next, _, _ = self.get_prior(h_next)
+        r_t = self.reward_predictor(torch.cat([h_next, s_next], dim=-1))
+        return s_next, r_t, h_next
+
+    def observe_step(self, s_prev, a_prev, h_prev, enc_t):
+        """
+        Single posterior step — encodes a real observation into RSSM state.
+        Used to seed imagination from real data.
+        Returns (s_t, h_t).
+        """
+        h_t = self.h_norm(self.recurrent(torch.cat([s_prev, a_prev], dim=-1), h_prev))
+        s_t, _, _ = self.get_posterior(h_t, enc_t)
+        return s_t, h_t
+
+
+# Keep alias for backward compatibility with any remaining imports
+WorldModel = RSSMWorldModel

@@ -1,15 +1,15 @@
 """
-Step 3: Dreamer-style imagination training of Actor and Critic.
+Step 3: Dreamer-style imagination training of Actor and Critic using RSSM.
 
 Requires: vae_encoder.pth (from train_vae.py), world_model.pth (from train_world_model.py),
           tub with telemetry.csv and images (for BC anchor seed states)
-Downstream: drive_sim.py or export_pth_to_tflite.py (uses dreamer_actor.pth)
+Downstream: drive_sim.py (uses dreamer_actor.pth)
 
-Freezes VAE + world model, then trains Actor and Critic entirely in imagination.
-Seeds dreams with real latent states from driving data (crash-frame purging: drops last
-30 frames per episode, skips episodes < 40 frames). TD3+BC behavioral cloning anchor
-(weight=10.0) on step 0. Rolls out imagined trajectories (horizon=20) with steering
-penalty and gradient clipping (max_norm=1.0). Exports dreamer_actor.pth.
+Freezes VAE + RSSM world model, trains Actor and Critic entirely in imagination.
+Seeds dreams by running one observe_step (posterior) on real frames to get (h_0, s_0).
+Actor/Critic see full RSSM state: cat(h_t, s_t) = STATE_DIM (288).
+TD3+BC behavioral cloning anchor on step 0. Imagination uses prior only (no observation).
+Exports dreamer_actor.pth.
 """
 
 import os
@@ -22,7 +22,7 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 
 # --- THE UNIFIED HUB ---
-from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR, MAX_TRAIN_IMAGES
+from core import DeterministicEncoder, Actor, RSSMWorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, DETER_DIM, STOCH_DIM, STATE_DIM, BATCH_SIZE_ACTOR, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
 IMAGINATION_HORIZON = 30     # Slightly shorter horizon limits compounding physics errors
@@ -45,8 +45,8 @@ if __name__ == '__main__':
     vae.requires_grad_(False)
     print(f"  Loaded {VAE_WEIGHTS}")
 
-    print("Loading Frozen World Model...")
-    world_model = WorldModel().to(device)
+    print("Loading Frozen RSSM World Model...")
+    world_model = RSSMWorldModel().to(device)
     world_model.load_state_dict(torch.load(WORLD_MODEL_WEIGHTS, map_location=device))
     world_model.eval()
     world_model.requires_grad_(False)
@@ -134,62 +134,75 @@ if __name__ == '__main__':
         print("You must record longer, safer driving sessions before training.")
         exit(1)
 
-    real_latents = torch.stack(real_latents) 
+    real_latents = torch.stack(real_latents)
     real_actions = torch.tensor(real_actions, dtype=torch.float32)
-    
+
     print(f"Discarded {skipped_micro_episodes} micro-episodes (too short).")
     print(f"Purged {valid_episodes * FRAMES_TO_DROP_AT_END} crash frames from valid episodes.")
     print(f"Loaded {len(real_latents)} purely safe track positions for the BC Anchor.")
 
     def get_seed_states(batch_size):
+        """Sample real frames, run one posterior observe_step to get (h_0, s_0)."""
         idx = torch.randint(0, len(real_latents), (batch_size,))
-        return real_latents[idx].to(device), real_actions[idx].to(device)
+        enc = real_latents[idx].to(device)
+        true_a = real_actions[idx].to(device)
+
+        # Bootstrap RSSM state from one observation (h,s initialized to zeros)
+        h_init = torch.zeros(batch_size, DETER_DIM, device=device)
+        s_init = torch.zeros(batch_size, STOCH_DIM, device=device)
+        a_init = torch.zeros(batch_size, ACTION_DIM, device=device)
+
+        with torch.no_grad():
+            s0, h0 = world_model.observe_step(s_init, a_init, h_init, enc)
+
+        return s0, h0, true_a
     
     # --- DREAMING LOOP ---
-    print(f"\nInitiating Imagination Engine ({DREAM_EPOCHS} dream epochs)...")
+    print(f"\nInitiating RSSM Imagination Engine ({DREAM_EPOCHS} dream epochs)...")
     print("-" * 80)
 
     for epoch in range(DREAM_EPOCHS):
-        z_t, true_a_t = get_seed_states(BATCH_SIZE)
-        h_t = torch.zeros(BATCH_SIZE, HIDDEN_DIM).to(device)
+        # Seed: get (h_0, s_0) from real observations via posterior
+        s_t, h_t, true_a_t = get_seed_states(BATCH_SIZE)
 
         actor_loss = 0
         critic_loss = 0
         bc_loss = 0
 
         for t in range(IMAGINATION_HORIZON):
-            a_t = actor(z_t)
-            
+            state_t = torch.cat([h_t, s_t], dim=-1)
+            a_t = actor(state_t)
+
             # TD3+BC Anchor: Penalize straying from human driving on step 0
             if t == 0:
                 bc_loss = nn.functional.mse_loss(a_t, true_a_t)
 
-            z_next, r_t, h_next = world_model.forward_step(z_t, a_t, h_t)
+            # forward_step: returns reward for current state, advances to next state
+            s_next, r_t, h_next = world_model.forward_step(s_t, a_t, h_t)
 
-            v_next = critic(z_next)
+            state_next = torch.cat([h_next, s_next], dim=-1)
+            v_next = critic(state_next)
             steering_penalty = torch.pow(a_t[:, 0:1], 2) * STEERING_PENALTY
             target_return = r_t + GAMMA * v_next - steering_penalty
 
             actor_loss += -target_return.mean()
 
-            # CRITIC LOSS: same shaped objective as actor so value estimates are consistent
-            current_v = critic(z_t.detach())
-            v_next_detached = critic(z_next.detach())
-            critic_target = r_t + GAMMA * v_next_detached - steering_penalty.detach()
-            
-            critic_loss += nn.functional.mse_loss(current_v, critic_target.detach())
+            # Critic loss: bootstrap from next value estimate
+            current_v = critic(state_t.detach())
+            v_next_detached = critic(state_next.detach())
+            critic_target = (r_t + GAMMA * v_next_detached - steering_penalty).detach()
+            critic_loss += nn.functional.mse_loss(current_v, critic_target)
 
-            z_t = z_next
+            s_t = s_next
             h_t = h_next
 
         actor_loss = actor_loss / IMAGINATION_HORIZON
         critic_loss = critic_loss / IMAGINATION_HORIZON
 
-        # Blend RL Imagination with the Reality Anchor
         total_actor_loss = actor_loss + (bc_loss * BC_WEIGHT)
 
         actor_opt.zero_grad()
-        total_actor_loss.backward() 
+        total_actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=1.0)
         actor_opt.step()
 
