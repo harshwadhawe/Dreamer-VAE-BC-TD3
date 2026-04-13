@@ -36,7 +36,7 @@ FLIP_EPISODE_OFFSET = 100000  # Offset for flipped episode IDs to prevent cross-
 LATENT_NOISE_STD = 0.005      # Gaussian noise injected into latents during training
 ACTION_NOISE_STD = 0.003      # Gaussian noise injected into actions during training
 KL_WEIGHT_MAX = 1.0            # KL annealed up from 0 to prevent early posterior collapse
-KL_WARMUP_EPOCHS = 10          # Epochs to ramp KL weight from 0 → KL_WEIGHT_MAX
+KL_WARMUP_EPOCHS = 20          # Epochs to ramp KL weight from 0 → KL_WEIGHT_MAX
 KL_FREE_NATS = 1.0             # Per-sample floor on KL — prevents full posterior collapse
 KL_BALANCE_ALPHA = 0.8         # V2: prior gets 80% learning pressure, posterior 20% regularization
 
@@ -117,11 +117,11 @@ class DonkeyTrajectoryDataset(Dataset):
         print(f"Filtered dataset: {len(self.valid_indices)} safe, unbroken sequences available.")
 
     def __len__(self):
-        return len(self.valid_indices)
+        return len(self.valid_indices) * WM_DATASET_MULTIPLIER
 
     def __getitem__(self, idx):
-        # Map the random index to a safe, continuous sequence
-        safe_idx = self.valid_indices[idx]
+        # Modulus wrap: same sequence re-sampled with fresh noise each copy
+        safe_idx = self.valid_indices[idx % len(self.valid_indices)]
 
         z = self.latents[safe_idx : safe_idx + self.seq_len].clone()
         a = self.actions[safe_idx : safe_idx + self.seq_len].clone()
@@ -142,7 +142,7 @@ if __name__ == '__main__':
     print(f"Using device: {device}")
     print(f"TUB_DIR: {TUB_DIR}")
     print(f"MODEL_DIR: {MODEL_DIR}")
-    print(f"Config: batch_size={BATCH_SIZE}, seq_len={SEQ_LEN}, pin_memory={PIN_MEMORY}")
+    print(f"Config: batch_size={BATCH_SIZE}, seq_len={SEQ_LEN}, multiplier={WM_DATASET_MULTIPLIER}, epochs={EPOCHS}, pin_memory={PIN_MEMORY}")
 
     print("\nLoading Frozen VAE Encoder...")
     vae = DeterministicEncoder().to(device)

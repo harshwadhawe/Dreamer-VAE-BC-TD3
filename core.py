@@ -51,8 +51,8 @@ SIM_ENV = "donkey-generated-track-v0"  # Change this to your desired track/envir
 
 # Paths — derived from SIM_ENV so collect + training always agree
 _env_name = SIM_ENV.removeprefix("donkey-").removesuffix("-v0").replace("-", "_")
-TUB_NAME = f"tub_{_env_name}"
-# TUB_NAME = f"tub_"
+# TUB_NAME = f"tub_{_env_name}"
+TUB_NAME = f"tub_sim"
 TUB_DIR = os.getenv('TUB_DIR', f'./data/{TUB_NAME}')
 MODEL_DIR = os.getenv('MODEL_DIR', f'./models/{TUB_NAME}')
 VAE_WEIGHTS = os.path.join(MODEL_DIR, 'vae_encoder.pth')
