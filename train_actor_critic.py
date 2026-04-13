@@ -25,12 +25,12 @@ from PIL import Image
 from core import DeterministicEncoder, Actor, WorldModel, Critic, process_sim_image, TUB_DIR, VAE_WEIGHTS, WORLD_MODEL_WEIGHTS, MODEL_DIR, device, LATENT_DIM, ACTION_DIM, HIDDEN_DIM, BATCH_SIZE_ACTOR, MAX_TRAIN_IMAGES
 
 # --- CONFIGURATION ---
-IMAGINATION_HORIZON = 15     # Slightly shorter horizon limits compounding physics errors
+IMAGINATION_HORIZON = 30     # Slightly shorter horizon limits compounding physics errors
 BATCH_SIZE = BATCH_SIZE_ACTOR # 512 is great, drop to 256 if CUDA OOM occurs
 DREAM_EPOCHS = 1000           # Prevents the Actor from exploiting World Model loopholes
 GAMMA = 0.99                 # Prioritizes immediate survival over long-term planning
 STEERING_PENALTY = 0.1       # Discourages extreme steering in imagined trajectories
-BC_WEIGHT = 2.0              # Behavioral cloning anchor weight (lower = more RL, higher = more imitation)
+BC_WEIGHT = 5.0              # Behavioral cloning anchor weight (lower = more RL, higher = more imitation)
 
 if __name__ == '__main__':
     print(f"Using device: {device}")

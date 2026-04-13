@@ -60,7 +60,7 @@ WORLD_MODEL_WEIGHTS = os.path.join(MODEL_DIR, 'world_model.pth')
 ACTOR_WEIGHTS = os.path.join(MODEL_DIR, 'dreamer_actor.pth')
 
 # Training data cap — set to None to use all images
-MAX_TRAIN_IMAGES = 8000
+MAX_TRAIN_IMAGES = None
 
 # Image preprocessing
 IMG_CROP_TOP = 40

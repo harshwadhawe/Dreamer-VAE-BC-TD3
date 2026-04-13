@@ -30,8 +30,8 @@ from core import (
 )
 
 # Beta warm-up: ramps from 0 to BETA_MAX over BETA_WARMUP_EPOCHS
-BETA_MAX = 0.1
-BETA_WARMUP_EPOCHS = 5
+BETA_MAX = 0.05
+BETA_WARMUP_EPOCHS = 10
 
 # --- CONFIGURATION ---
 EPOCH_IMG_DIR = os.path.join(MODEL_DIR, 'epoch_images_torch')
@@ -78,12 +78,12 @@ class DonkeyTubDataset(Dataset):
             raise ValueError("No images found! Check your TUB_DIR path.")
 
         self.transform = transforms.Compose([
-            transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.2, hue=0.02),
+            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.02),
             transforms.RandomGrayscale(p=0.05),
             transforms.ToTensor(),
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.5)),
             transforms.RandomHorizontalFlip(p=0.5),
-            RandomShadow(p=0.3),
+            RandomShadow(p=0.2),
             RandomMotionBlur(kernel_size=5, p=0.3),
             transforms.RandomErasing(p=0.2, scale=(0.02, 0.1), ratio=(0.3, 3.3), value=0)
         ])
